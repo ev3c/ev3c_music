@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ev3c music · Music in every language, emotions without limits</title>
+  <meta name="description" content="ev3c music — Create · Feel · Inspire. Música en todos los idiomas: English, Español, Català y Français." />
+  <link rel="icon" type="image/png" href="assets/logo.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="css/styles.css" />
+</head>
+<body>
+  <!-- Fondo animado -->
+  <div class="bg-aurora" aria-hidden="true"></div>
+  <div class="bg-grid" aria-hidden="true"></div>
+
+  <div class="file-warn" id="fileWarn" hidden>
+    <p>YouTube no reproduce vídeos al abrir el archivo directamente. Usa el servidor local.</p>
+    <button type="button" class="btn btn-primary btn-sm" data-start-play>▶ Reproducir igualmente</button>
+  </div>
+
+  <!-- PLAYLISTS -->
+  <section class="section section-only" id="playlists">
+    <div class="lang-bar">
+      <img src="ev3c_logos/ev3c_logo.png" alt="ev3c music" class="lang-logo" />
+      <div class="lang-tabs" id="langTabs" role="tablist"></div>
+    </div>
+
+    <!-- Reproductor principal -->
+    <div class="player-wrap">
+      <div class="player-glow" id="playerGlow"></div>
+      <div class="player-frame">
+        <div class="player-aspect">
+          <div id="ytPlayer" title="ev3c music player"></div>
+          <div class="player-placeholder hidden" id="playerPlaceholder">
+            <img src="assets/logo.png" alt="" />
+            <p id="placeholderText">Conecta la playlist para empezar a reproducir</p>
+            <a href="#" data-yt-search class="btn btn-ghost btn-sm">Buscar en YouTube</a>
+          </div>
+        </div>
+      </div>
+      <div class="player-meta">
+        <div class="player-meta-info">
+          <span class="player-flag" id="playerFlag">🇬🇧</span>
+          <div>
+            <p class="player-label" id="playerLabel">ev3c music ENG</p>
+            <p class="player-desc" id="playerDesc">Selecciona un idioma para reproducir</p>
+          </div>
+        </div>
+        <a href="#" data-yt-open class="btn btn-primary btn-sm" id="openPlaylist">Abrir en YouTube ↗</a>
+      </div>
+    </div>
+  </section>
+
+  <script src="js/config.js"></script>
+  <script src="js/app.js"></script>
+  <script src="https://www.youtube.com/iframe_api"></script>
+</body>
+</html>
