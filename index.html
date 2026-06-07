@@ -24,7 +24,10 @@
   <!-- PLAYLISTS -->
   <section class="section section-only" id="playlists">
     <div class="lang-bar">
-      <img src="ev3c_logos/ev3c_logo.png" alt="ev3c music" class="lang-logo" />
+      <div class="lang-brand">
+        <img src="ev3c_logos/ev3c_logo.png" alt="ev3c music" class="lang-logo" />
+        <span class="app-version">v1.1</span>
+      </div>
       <div class="lang-tabs" id="langTabs" role="tablist"></div>
     </div>
 
@@ -49,7 +52,10 @@
             <p class="player-desc" id="playerDesc">Selecciona un idioma para reproducir</p>
           </div>
         </div>
-        <a href="#" data-yt-open class="btn btn-primary btn-sm" id="openPlaylist">Abrir en YouTube ↗</a>
+        <div class="player-meta-actions">
+          <button type="button" class="btn btn-dislike btn-sm" id="dislikeBtn" title="No volver a reproducir esta canción">👎 Dislike</button>
+          <a href="#" data-yt-open class="btn btn-primary btn-sm" id="openPlaylist">Abrir en YouTube ↗</a>
+        </div>
       </div>
     </div>
   </section>

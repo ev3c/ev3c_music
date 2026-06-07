@@ -3,6 +3,7 @@
 
   const CFG = window.EV3C_CONFIG || { languages: [] };
   const langs = CFG.languages || [];
+  const DISLIKE_PREFIX = "ev3c_disliked:";
 
   const GLOWS = {
     ALL: "linear-gradient(100deg, #00d4ff, #8b3bff 55%, #ff2bb4)",
@@ -23,6 +24,7 @@
     label: $("#playerLabel"),
     desc: $("#playerDesc"),
     openBtn: $("#openPlaylist"),
+    dislikeBtn: $("#dislikeBtn"),
     footerLangs: $("#footerLangs"),
     year: $("#year"),
     fileWarn: $("#fileWarn")
@@ -47,6 +49,61 @@
     return `https://www.youtube.com/results?search_query=${encodeURIComponent(q || "ev3c music")}`;
   }
 
+  function getDisliked(playlistId) {
+    if (!playlistId) return new Set();
+    try {
+      const raw = localStorage.getItem(DISLIKE_PREFIX + playlistId);
+      return raw ? new Set(JSON.parse(raw)) : new Set();
+    } catch (e) {
+      return new Set();
+    }
+  }
+
+  function saveDisliked(playlistId, set) {
+    if (!playlistId) return;
+    localStorage.setItem(DISLIKE_PREFIX + playlistId, JSON.stringify([...set]));
+  }
+
+  function getCurrentVideoId() {
+    if (!player) return null;
+    try {
+      const data = player.getVideoData();
+      return data && data.video_id ? data.video_id : null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function getPlayableIndices(lang) {
+    if (!player) return [];
+    try {
+      const list = player.getPlaylist && player.getPlaylist();
+      if (!list || !list.length) return [];
+      const disliked = getDisliked(lang.playlistId);
+      const indices = [];
+      for (let i = 0; i < list.length; i++) {
+        if (!disliked.has(list[i])) indices.push(i);
+      }
+      return indices;
+    } catch (e) {
+      return [];
+    }
+  }
+
+  function playRandomNonDisliked(lang, autoplay) {
+    if (!player || !lang) return false;
+    const indices = getPlayableIndices(lang);
+    if (!indices.length) {
+      els.desc.textContent = "Todas las canciones están en dislike. Limpia el almacenamiento del navegador.";
+      return false;
+    }
+    const idx = indices[Math.floor(Math.random() * indices.length)];
+    player.setShuffle(true);
+    player.playVideoAt(idx);
+    if (autoplay) player.playVideo();
+    return true;
+  }
+
   function randomIndex(lang) {
     const total = lang.videoCount || 50;
     return Math.floor(Math.random() * total);
@@ -54,14 +111,13 @@
 
   function applyRandomStart() {
     if (!player || !shufflePending) return;
+    const lang = langs[current];
+    if (!lang) return;
     try {
       const list = player.getPlaylist && player.getPlaylist();
       if (list && list.length > 0) {
-        player.setShuffle(true);
-        player.playVideoAt(Math.floor(Math.random() * list.length));
+        playRandomNonDisliked(lang, shouldAutoplay);
         shufflePending = false;
-        if (shouldAutoplay) player.playVideo();
-        return;
       }
     } catch (e) { /* la playlist aún no está lista */ }
   }
@@ -79,6 +135,31 @@
       index: randomIndex(lang)
     });
     return true;
+  }
+
+  function skipDislikedOnCue() {
+    const lang = langs[current];
+    if (!lang || !lang.playlistId || !player) return;
+    const videoId = getCurrentVideoId();
+    if (!videoId) return;
+    const disliked = getDisliked(lang.playlistId);
+    if (disliked.has(videoId)) {
+      playRandomNonDisliked(lang, true);
+    }
+  }
+
+  function handleDislike() {
+    const lang = langs[current];
+    if (!lang || !lang.playlistId || !player || !apiReady) return;
+
+    const videoId = getCurrentVideoId();
+    if (!videoId) return;
+
+    const disliked = getDisliked(lang.playlistId);
+    disliked.add(videoId);
+    saveDisliked(lang.playlistId, disliked);
+
+    playRandomNonDisliked(lang, true);
   }
 
   function selectLang(i, autoplay) {
@@ -161,6 +242,10 @@
               e.data === YT.PlayerState.PLAYING)
           ) {
             applyRandomStart();
+            return;
+          }
+          if (e.data === YT.PlayerState.CUED || e.data === YT.PlayerState.PLAYING) {
+            skipDislikedOnCue();
           }
         }
       }
@@ -187,6 +272,10 @@
       els.footerLangs.appendChild(a);
     }
   });
+
+  if (els.dislikeBtn) {
+    els.dislikeBtn.addEventListener("click", handleDislike);
+  }
 
   document.querySelectorAll("[data-yt-channel]").forEach((el) => {
     el.href = CFG.channelUrl || searchUrl("ev3c music");

@@ -172,9 +172,14 @@ a { color: inherit; text-decoration: none; }
   width: min(96vw, calc((100vh - 200px) * 16 / 9));
   max-width: none; margin: 0 auto 16px;
 }
+.lang-brand { display: flex; flex-direction: row; align-items: center; gap: 10px; flex-shrink: 0; }
 .lang-logo {
-  width: 96px; height: 96px; border-radius: 50%; object-fit: cover;
-  box-shadow: var(--shadow-neon); flex-shrink: 0;
+  width: 64px; height: 64px; border-radius: 50%; object-fit: cover;
+  box-shadow: var(--shadow-neon);
+}
+.app-version {
+  font-family: 'Orbitron', sans-serif; font-size: .7rem; letter-spacing: 1px;
+  color: var(--muted); opacity: .85; white-space: nowrap;
 }
 .section-only .lang-tabs { margin-bottom: 0; justify-content: flex-start; flex: 1; }
 /* El reproductor ocupa lo máximo posible sin perder el 16:9 ni salirse de la ventana */
@@ -229,14 +234,25 @@ a { color: inherit; text-decoration: none; }
 .player-placeholder.hidden { display: none; }
 
 .player-meta {
-  position: relative; z-index: 1; display: flex; align-items: center; justify-content: space-between; gap: 16px;
-  margin-top: 18px; padding: 16px 20px; border-radius: 14px;
+  position: relative; z-index: 1; display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  margin-top: 10px; padding: 8px 12px; border-radius: 10px;
   background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.08); backdrop-filter: blur(8px); flex-wrap: wrap;
 }
-.player-meta-info { display: flex; align-items: center; gap: 14px; }
-.player-flag { font-size: 2rem; }
-.player-label { font-family: 'Orbitron', sans-serif; font-weight: 700; }
-.player-desc { color: var(--muted); font-size: .88rem; }
+.player-meta-info { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.player-meta-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.player-meta .btn-sm { padding: 5px 10px; font-size: .72rem; }
+.btn-dislike {
+  background: rgba(255, 60, 90, .12); color: #ff6b8a;
+  border: 1px solid rgba(255, 60, 90, .35);
+}
+.btn-dislike:hover {
+  background: rgba(255, 60, 90, .22); border-color: #ff6b8a;
+  transform: translateY(-2px);
+}
+.btn-dislike:active { transform: scale(.97); }
+.player-flag { font-size: 1.25rem; line-height: 1; }
+.player-label { font-family: 'Orbitron', sans-serif; font-weight: 700; font-size: .82rem; line-height: 1.2; }
+.player-desc { color: var(--muted); font-size: .7rem; line-height: 1.25; margin-top: 1px; }
 
 /* ---------- About ---------- */
 .about-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 22px; }
