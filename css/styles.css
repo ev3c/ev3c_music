@@ -342,6 +342,15 @@ a { color: inherit; text-decoration: none; }
   transform: translateY(-2px);
 }
 .btn-dislike:active { transform: scale(.97); }
+.btn-cast {
+  background: rgba(0, 212, 255, .1); color: var(--cyan);
+  border: 1px solid rgba(0, 212, 255, .35);
+}
+.btn-cast:hover {
+  background: rgba(0, 212, 255, .2); border-color: var(--cyan);
+  transform: translateY(-2px);
+}
+.btn-cast:active { transform: scale(.97); }
 .player-flag { font-size: 1.25rem; line-height: 1; }
 .player-label { font-family: 'Orbitron', sans-serif; font-weight: 700; font-size: .82rem; line-height: 1.2; }
 .player-desc { color: var(--muted); font-size: .7rem; line-height: 1.25; margin-top: 1px; }
@@ -383,4 +392,30 @@ a { color: inherit; text-decoration: none; }
 @media (max-width: 640px) {
   .nav-links a:not(.nav-sub) { display: none; }
   .player-meta { justify-content: center; text-align: center; }
+
+  .lang-bar {
+    flex-direction: column;
+    align-items: center;
+    gap: 14px;
+    margin-bottom: 12px;
+  }
+  .lang-brand {
+    justify-content: center;
+    width: 100%;
+    order: -1;
+  }
+  .lang-logo {
+    width: 72px;
+    height: 72px;
+  }
+  .app-version {
+    font-size: .8rem;
+    color: var(--cyan);
+    opacity: 1;
+  }
+  .section-only .lang-tabs {
+    justify-content: center;
+    width: 100%;
+    flex: none;
+  }
 }

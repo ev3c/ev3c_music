@@ -41,7 +41,7 @@
     discoverLoader: $("#discoverLoader"),
     footerLangs: $("#footerLangs"),
     year: $("#year"),
-    fileWarn: $("#fileWarn")
+    castTvBtn: $("#castTvBtn"),
   };
 
   const isFileProtocol = window.location.protocol === "file:";
@@ -61,9 +61,11 @@
   };
   const INVIDIOUS_FALLBACK = [
     "https://inv.nadeko.net",
+    "https://invidious.tiekoetter.com",
     "https://invidious.f5.si",
     "https://inv.zoomerville.com"
   ];
+  const PIPED_FALLBACK = ["https://api.piped.private.coffee"];
 
   let player = null;
   let apiReady = false;
@@ -81,6 +83,7 @@
   let lastTrackedVideoId = null;
   let excludedIds = new Set(window.EV3C_EXCLUDED || []);
   let invidiousInstances = [...INVIDIOUS_FALLBACK];
+  let pipedInstances = [...PIPED_FALLBACK];
   let playlistsRefreshPromise = null;
   const playlistVideoIds = new Map();
   const playlistVideosData = new Map();
@@ -151,6 +154,69 @@
       } catch (e) { /* siguiente instancia */ }
     }
     throw new Error("Invidious no disponible");
+  }
+
+  async function loadPipedInstances() {
+    try {
+      const r = await fetch("https://piped-instances.kavin.rocks/");
+      const data = await r.json();
+      const apis = [];
+      for (const item of data) {
+        if (item?.api_url && !item.censored) apis.push(item.api_url);
+      }
+      if (apis.length) {
+        pipedInstances = [...new Set([...apis.slice(0, 12), ...PIPED_FALLBACK])];
+      }
+    } catch (e) { /* fallback */ }
+  }
+
+  async function pipedFetch(path) {
+    for (const base of pipedInstances) {
+      try {
+        const r = await fetch(base.replace(/\/$/, "") + path);
+        if (r.ok) return r.json();
+      } catch (e) { /* siguiente instancia */ }
+    }
+    throw new Error("Piped no disponible");
+  }
+
+  function extractVideoIdFromUrl(url) {
+    if (!url) return null;
+    const m = String(url).match(/(?:v=|\/)([a-zA-Z0-9_-]{11})/);
+    return m ? m[1] : null;
+  }
+
+  function normalizePipedItem(item) {
+    const videoId = extractVideoIdFromUrl(item?.url);
+    if (!videoId) return null;
+    const uploaded = item.uploaded;
+    const published = uploaded > 1e12 ? Math.floor(uploaded / 1000) : (uploaded || 0);
+    return {
+      videoId,
+      title: item.title || "",
+      author: item.uploaderName || "",
+      lengthSeconds: item.duration > 0 ? item.duration : null,
+      published
+    };
+  }
+
+  async function discoverSearch(query) {
+    try {
+      const results = await invidiousFetch(
+        `/api/v1/search?q=${encodeURIComponent(query)}&type=video`
+      );
+      if (Array.isArray(results) && results.length) return results;
+    } catch (e) { /* fallback a Piped */ }
+
+    try {
+      const data = await pipedFetch(
+        `/search?q=${encodeURIComponent(query)}&filter=videos`
+      );
+      const items = data?.items || [];
+      return items.map(normalizePipedItem).filter(Boolean);
+    } catch (e) {
+      return [];
+    }
   }
 
   function applyPlaylistCount(lang, count) {
@@ -505,7 +571,7 @@
       return b.recency - a.recency;
     });
     const topTaste = candidates[0].taste;
-    const tier = candidates.filter((c) => c.taste >= Math.max(2, topTaste - 2));
+    const tier = candidates.filter((c) => c.taste >= Math.max(0, topTaste - 2));
     const pickFrom = tier.length ? tier : candidates;
     return pickFrom[Math.floor(Math.random() * pickFrom.length)].videoId;
   }
@@ -559,6 +625,8 @@
     let played = getDiscoverPlayed();
     const seeds = pickDiscoverSeeds(6);
 
+    await loadPipedInstances();
+
     for (let attempt = 0; attempt < 2; attempt++) {
       if (attempt === 1) {
         resetPlayed(DISCOVER_KEY);
@@ -570,43 +638,27 @@
         ? buildTasteSearchQueries(seeds)
         : getDiscoverQueries().sort(() => Math.random() - 0.5);
 
-      for (const q of queries.slice(0, 14)) {
-        try {
-          const results = await invidiousFetch(
-            `/api/v1/search?q=${encodeURIComponent(q)}&type=video`
-          );
-          const list = Array.isArray(results) ? results : [];
-          list.forEach((v) => addDiscoverCandidate(scored, v, seeds, lang, 2));
-        } catch (e) { /* siguiente búsqueda */ }
+      const searchPasses = [
+        { slice: [0, 14], minTaste: 2 },
+        { slice: [14, 28], minTaste: 1 },
+        { slice: null, minTaste: 0, extra: getDiscoverQueries() }
+      ];
+
+      for (const pass of searchPasses) {
+        if (scored.size > 0) break;
+        const qList = pass.slice
+          ? queries.slice(pass.slice[0], pass.slice[1])
+          : [...pass.extra].sort(() => Math.random() - 0.5);
+        for (const q of qList) {
+          try {
+            const list = await discoverSearch(q);
+            list.forEach((v) => addDiscoverCandidate(scored, v, seeds, lang, pass.minTaste));
+            if (scored.size >= 8) break;
+          } catch (e) { /* siguiente búsqueda */ }
+        }
       }
 
-      let pool = [...scored.values()];
-      if (!pool.length && seeds.length) {
-        for (const q of queries.slice(14)) {
-          try {
-            const results = await invidiousFetch(
-              `/api/v1/search?q=${encodeURIComponent(q)}&type=video`
-            );
-            const list = Array.isArray(results) ? results : [];
-            list.forEach((v) => addDiscoverCandidate(scored, v, seeds, lang, 1));
-          } catch (e) { /* siguiente */ }
-        }
-        pool = [...scored.values()];
-      }
-      if (!pool.length) {
-        for (const q of getDiscoverQueries().sort(() => Math.random() - 0.5)) {
-          try {
-            const results = await invidiousFetch(
-              `/api/v1/search?q=${encodeURIComponent(q)}&type=video`
-            );
-            const list = Array.isArray(results) ? results : [];
-            list.forEach((v) => addDiscoverCandidate(scored, v, seeds, lang, 1));
-          } catch (e) { /* siguiente */ }
-        }
-        pool = [...scored.values()];
-      }
-
-      const pick = pickFromScoredPool(pool, played, currentId);
+      const pick = pickFromScoredPool([...scored.values()], played, currentId);
       if (pick) return pick;
     }
     return null;
@@ -1361,6 +1413,15 @@
 
   if (els.dislikeBtn) {
     els.dislikeBtn.addEventListener("click", handleDislike);
+  }
+
+  if (window.EV3C_CAST && els.castTvBtn) {
+    EV3C_CAST.init({
+      getUrl: () => externalUrl(langs[current] || {}),
+      getVideoId: () => getCurrentVideoId(),
+      onFeedback: (msg) => flashLikeFeedback(msg)
+    });
+    els.castTvBtn.addEventListener("click", () => EV3C_CAST.sendToTv());
   }
 
   waitForGisAndInit();

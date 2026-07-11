@@ -26,7 +26,7 @@
     <div class="lang-bar">
       <div class="lang-brand">
         <img src="ev3c_logos/ev3c_logo.png" alt="ev3c music" class="lang-logo" />
-        <span class="app-version">v1.2</span>
+        <span class="app-version">v1.3</span>
       </div>
       <div class="lang-tabs" id="langTabs" role="tablist"></div>
     </div>
@@ -59,6 +59,7 @@
         <div class="player-meta-actions">
           <button type="button" class="btn btn-like btn-sm" id="likeBtn" title="Añadir a ev3c music (ALL)">👍 Like</button>
           <button type="button" class="btn btn-dislike btn-sm" id="dislikeBtn" title="No volver a reproducir esta canción">👎 Dislike</button>
+          <button type="button" class="btn btn-cast btn-sm" id="castTvBtn" title="Enviar a TV (Chromecast / Android TV)">📺 TV</button>
           <a href="#" data-yt-open class="btn btn-primary btn-sm" id="openPlaylist">Abrir en YouTube ↗</a>
         </div>
       </div>
@@ -78,9 +79,11 @@
     </div>
   </div>
 
+  <script src="https://www.gstatic.com/cv/js/sender/v1/cast_sender.js?loadCastFramework=1" async></script>
   <script src="js/config.js"></script>
   <script src="js/excluded-videos.js"></script>
   <script src="js/youtube-like.js"></script>
+  <script src="js/cast-tv.js"></script>
   <script src="https://accounts.google.com/gsi/client" async defer></script>
   <script src="js/app.js"></script>
   <script src="https://www.youtube.com/iframe_api"></script>
