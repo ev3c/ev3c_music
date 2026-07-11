@@ -26,7 +26,7 @@
     <div class="lang-bar">
       <div class="lang-brand">
         <img src="ev3c_logos/ev3c_logo.png" alt="ev3c music" class="lang-logo" />
-        <span class="app-version">v1.1</span>
+        <span class="app-version">v1.2</span>
       </div>
       <div class="lang-tabs" id="langTabs" role="tablist"></div>
     </div>
@@ -37,6 +37,10 @@
       <div class="player-frame">
         <div class="player-aspect">
           <div id="ytPlayer" title="ev3c music player"></div>
+          <div class="discover-loader hidden" id="discoverLoader" aria-live="polite">
+            <div class="discover-loader-ring" aria-hidden="true"></div>
+            <p class="discover-loader-text">Buscando novedades para ti…</p>
+          </div>
           <div class="player-placeholder hidden" id="playerPlaceholder">
             <img src="assets/logo.png" alt="" />
             <p id="placeholderText">Conecta la playlist para empezar a reproducir</p>
@@ -53,6 +57,7 @@
           </div>
         </div>
         <div class="player-meta-actions">
+          <button type="button" class="btn btn-like btn-sm" id="likeBtn" title="Añadir a ev3c music (ALL)">👍 Like</button>
           <button type="button" class="btn btn-dislike btn-sm" id="dislikeBtn" title="No volver a reproducir esta canción">👎 Dislike</button>
           <a href="#" data-yt-open class="btn btn-primary btn-sm" id="openPlaylist">Abrir en YouTube ↗</a>
         </div>
@@ -60,7 +65,23 @@
     </div>
   </section>
 
+  <div class="like-modal" id="likeModal" hidden>
+    <div class="like-modal-backdrop" data-like-close></div>
+    <div class="like-modal-box" role="dialog" aria-labelledby="likeModalTitle">
+      <h3 class="like-modal-title" id="likeModalTitle">Añadir a listas</h3>
+      <p class="like-modal-video" id="likeModalVideo"></p>
+      <ul class="like-playlist-list" id="likePlaylistList"></ul>
+      <div class="like-modal-actions">
+        <button type="button" class="btn btn-ghost btn-sm" data-like-close>Cancelar</button>
+        <button type="button" class="btn btn-like btn-sm" id="likeConfirmBtn">Añadir</button>
+      </div>
+    </div>
+  </div>
+
   <script src="js/config.js"></script>
+  <script src="js/excluded-videos.js"></script>
+  <script src="js/youtube-like.js"></script>
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
   <script src="js/app.js"></script>
   <script src="https://www.youtube.com/iframe_api"></script>
 </body>

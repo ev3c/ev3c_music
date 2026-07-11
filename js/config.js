@@ -18,15 +18,28 @@
 
 window.EV3C_CONFIG = {
   channelUrl: "https://www.youtube.com/@ev3c",
+  playedResetRatio: 0.9,
+  maxDurationSeconds: 600,
+
+  /* Like → añadir a ev3c_all en YouTube (requiere OAuth):
+     1) Google Cloud Console → YouTube Data API v3 activada
+     2) Credenciales OAuth 2.0 (tipo: aplicación web)
+     3) Orígenes autorizados: http://localhost:8123
+     4) Pega clientId (y apiKey opcional) abajo */
+  youtube: {
+    clientId: "",
+    apiKey: "",
+    allPlaylistId: "PLngPtibRb2iFrta4peXN3qV5yD9yIEQcq"
+  },
 
   languages: [
     {
       code: "ALL",
       flag: "🎵",
       name: "ev3c music",
-      desc: "Lista principal · 444 vídeos · todos los idiomas",
+      desc: "Lista principal · todos los idiomas",
       playlistId: "PLngPtibRb2iFrta4peXN3qV5yD9yIEQcq",
-      videoCount: 444,
+      videoCount: 0,
       videoId: "",
       searchQuery: "ev3c music"
     },
@@ -34,9 +47,9 @@ window.EV3C_CONFIG = {
       code: "ENG",
       flag: "🇬🇧",
       name: "ev3c music ENG",
-      desc: "English tracks · 236 vídeos · feel the rhythm",
+      desc: "English tracks · feel the rhythm",
       playlistId: "PLngPtibRb2iHHBR67jrxkjuU5T0M578UA",
-      videoCount: 236,
+      videoCount: 0,
       videoId: "",
       searchQuery: "ev3c music eng"
     },
@@ -44,9 +57,9 @@ window.EV3C_CONFIG = {
       code: "ESP",
       flag: "🇪🇸",
       name: "ev3c music ESP",
-      desc: "Canciones en español · 120 vídeos · siente la vibra",
+      desc: "Canciones en español · siente la vibra",
       playlistId: "PLngPtibRb2iHWqOO2qhH6a5FlM_uCY2Mn",
-      videoCount: 120,
+      videoCount: 0,
       videoId: "",
       searchQuery: "ev3c music esp"
     },
@@ -54,9 +67,9 @@ window.EV3C_CONFIG = {
       code: "CAT",
       flag: "🏴󠁥󠁳󠁣󠁴󠁿",
       name: "ev3c music CAT",
-      desc: "Cançons en català · 63 vídeos · emoció sense límits",
+      desc: "Cançons en català · emoció sense límits",
       playlistId: "PLngPtibRb2iEPBnv6M4dfZR6Ms-ERn0Yr",
-      videoCount: 63,
+      videoCount: 0,
       videoId: "",
       searchQuery: "ev3c music cat"
     },
@@ -64,11 +77,33 @@ window.EV3C_CONFIG = {
       code: "FRA",
       flag: "🇫🇷",
       name: "ev3c music FRA",
-      desc: "Chansons en français · 17 vídeos · émotions sans limites",
+      desc: "Chansons en français · émotions sans limites",
       playlistId: "PLngPtibRb2iH9afV1MSjMAyWvRMe9wA_x",
-      videoCount: 17,
+      videoCount: 0,
       videoId: "",
       searchQuery: "ev3c music fra"
+    },
+    {
+      code: "NEW",
+      flag: "🆕",
+      name: "Novedades",
+      desc: "Canciones añadidas desde tu última visita",
+      mode: "novedades",
+      playlistId: "",
+      videoCount: 0,
+      videoId: "",
+      searchQuery: "ev3c music novedades"
+    },
+    {
+      code: "DISCOVER",
+      flag: "✨",
+      name: "Discover",
+      desc: "Tu música habitual · fuera de tus listas",
+      mode: "youtube-mix",
+      playlistId: "",
+      videoCount: 0,
+      videoId: "",
+      searchQuery: "ev3c music discover"
     }
   ]
 };

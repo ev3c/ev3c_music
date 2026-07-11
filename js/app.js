@@ -4,13 +4,21 @@
   const CFG = window.EV3C_CONFIG || { languages: [] };
   const langs = CFG.languages || [];
   const DISLIKE_PREFIX = "ev3c_disliked:";
+  const PLAYED_PREFIX = "ev3c_played:";
+  const DISCOVER_KEY = "__discover__";
+  const NOVEDADES_KEY = "__novedades__";
+  const SNAPSHOT_KEY = "ev3c_snapshot";
+  const PLAYED_RESET_RATIO = CFG.playedResetRatio ?? 0.9;
+  const MAX_DURATION = CFG.maxDurationSeconds ?? 600;
 
   const GLOWS = {
     ALL: "linear-gradient(100deg, #00d4ff, #8b3bff 55%, #ff2bb4)",
     ENG: "linear-gradient(100deg, #00d4ff, #2a7bff)",
     ESP: "linear-gradient(100deg, #ff2bb4, #ff7a18)",
     CAT: "linear-gradient(100deg, #ffd23f, #ff2bb4)",
-    FRA: "linear-gradient(100deg, #8b3bff, #00d4ff)"
+    FRA: "linear-gradient(100deg, #8b3bff, #00d4ff)",
+    DISCOVER: "linear-gradient(100deg, #00ffcc, #8b3bff 45%, #ff2bb4)",
+    NEW: "linear-gradient(100deg, #ffd23f, #ff7a18 45%, #ff2bb4)"
   };
 
   const $ = (sel) => document.querySelector(sel);
@@ -24,7 +32,13 @@
     label: $("#playerLabel"),
     desc: $("#playerDesc"),
     openBtn: $("#openPlaylist"),
+    likeBtn: $("#likeBtn"),
     dislikeBtn: $("#dislikeBtn"),
+    likeModal: $("#likeModal"),
+    likeModalVideo: $("#likeModalVideo"),
+    likePlaylistList: $("#likePlaylistList"),
+    likeConfirmBtn: $("#likeConfirmBtn"),
+    discoverLoader: $("#discoverLoader"),
     footerLangs: $("#footerLangs"),
     year: $("#year"),
     fileWarn: $("#fileWarn")
@@ -32,14 +46,643 @@
 
   const isFileProtocol = window.location.protocol === "file:";
 
+  const DISCOVER_STOPWORDS = new Set([
+    "the", "and", "for", "with", "official", "video", "audio", "lyrics", "live",
+    "remix", "cover", "music", "feat", "ft", "hd", "4k", "full", "album",
+    "de", "la", "el", "en", "y", "a", "un", "una", "los", "las", "del", "que",
+    "les", "des", "une", "pour", "dans", "sur", "avec", "par"
+  ]);
+  const DISCOVER_QUERIES = {
+    ALL: ["new music 2026", "latest songs", "music discovery", "indie music new"],
+    ENG: ["new english songs 2026", "uk new music releases", "indie rock new"],
+    ESP: ["música nueva 2026", "canciones nuevas", "nueva música española"],
+    CAT: ["música nova catalunya", "cançons noves", "música catalana nova"],
+    FRA: ["nouvelle musique française", "nouveautés musique 2026", "chanson nouveauté"]
+  };
+  const INVIDIOUS_FALLBACK = [
+    "https://inv.nadeko.net",
+    "https://invidious.f5.si",
+    "https://inv.zoomerville.com"
+  ];
+
   let player = null;
   let apiReady = false;
   let current = 0;
+  let lastContextIndex = 0;
   let userStarted = false;
   let shufflePending = false;
   let shouldAutoplay = false;
+  let discoverLoading = false;
+  let discoverWaitingPlay = false;
+  let discoverLoaderTimer = null;
+  let discoverTargetVideoId = null;
+  const tooLongSkipped = new Set();
+  let pendingDiscoverAutoplay = false;
+  let lastTrackedVideoId = null;
+  let excludedIds = new Set(window.EV3C_EXCLUDED || []);
+  let invidiousInstances = [...INVIDIOUS_FALLBACK];
+  let playlistsRefreshPromise = null;
+  const playlistVideoIds = new Map();
+  const playlistVideosData = new Map();
+  let novedadesPool = [];
+  const langDesc = langs.map((l) => l.desc);
+
+  function isMixMode(lang) {
+    return lang && lang.mode === "youtube-mix";
+  }
+
+  function isNovedadesMode(lang) {
+    return lang && lang.mode === "novedades";
+  }
+
+  function isSpecialMode(lang) {
+    return isMixMode(lang) || isNovedadesMode(lang);
+  }
+
+  function storageKey(lang) {
+    if (isMixMode(lang)) return DISCOVER_KEY;
+    if (isNovedadesMode(lang)) return NOVEDADES_KEY;
+    return lang.playlistId;
+  }
+
+  function mergeIntoExcluded(ids) {
+    ids.forEach((id) => {
+      if (id && id.length === 11) excludedIds.add(id);
+    });
+  }
+
+  function mergeCurrentPlaylistIntoExcluded() {
+    mergeIntoExcluded(getPlaylistList());
+  }
+
+  function isVideoInEv3cLists(videoId) {
+    if (!videoId) return false;
+    for (const ids of playlistVideoIds.values()) {
+      if (ids.includes(videoId)) return true;
+    }
+    return excludedIds.has(videoId);
+  }
+
+  function isInMyLists(videoId) {
+    return isVideoInEv3cLists(videoId);
+  }
+
+  async function loadInvidiousInstances() {
+    try {
+      const r = await fetch("https://api.invidious.io/instances.json?sort_by=health");
+      const data = await r.json();
+      const uris = [];
+      for (const item of data) {
+        if (typeof item === "string") uris.push(item);
+        else if (Array.isArray(item) && item[0]) uris.push(String(item[0]));
+        else if (item?.uri && item?.api) uris.push(item.uri);
+      }
+      if (uris.length) {
+        invidiousInstances = [...new Set([...uris.slice(0, 15), ...INVIDIOUS_FALLBACK])];
+      }
+    } catch (e) { /* fallback */ }
+  }
+
+  async function invidiousFetch(path) {
+    for (const base of invidiousInstances) {
+      try {
+        const r = await fetch(base.replace(/\/$/, "") + path);
+        if (r.ok) return r.json();
+      } catch (e) { /* siguiente instancia */ }
+    }
+    throw new Error("Invidious no disponible");
+  }
+
+  function applyPlaylistCount(lang, count) {
+    if (!count || count <= 0) return;
+    lang.videoCount = count;
+    const idx = langs.indexOf(lang);
+    if (idx < 0) return;
+    let updated = langDesc[idx] || lang.desc;
+    if (/\d+\s+vídeos?/gi.test(updated)) {
+      updated = updated.replace(/\d+\s+vídeos?/gi, `${count} vídeos`);
+    } else {
+      const parts = updated.split(" · ");
+      if (parts.length >= 2) parts.splice(1, 0, `${count} vídeos`);
+      else parts.push(`${count} vídeos`);
+      updated = parts.join(" · ");
+    }
+    langDesc[idx] = updated;
+    lang.desc = updated;
+    if (idx === current && !isSpecialMode(lang) && els.desc) {
+      els.desc.textContent = updated;
+    }
+  }
+
+  async function fetchAllPlaylistIds(playlistId, onProgress) {
+    const seen = new Set();
+    const allIds = [];
+    const allMeta = [];
+    let page = 1;
+    let totalFromApi = null;
+    const MAX_PAGES = 30;
+
+    while (page <= MAX_PAGES) {
+      let data;
+      try {
+        data = await invidiousFetch(`/api/v1/playlists/${playlistId}?page=${page}`);
+      } catch (e) {
+        break;
+      }
+      if (totalFromApi === null && data.videoCount > 0) totalFromApi = data.videoCount;
+      const batch = [];
+      for (const v of data.videos || []) {
+        const id = v.videoId;
+        if (!id || id.length !== 11 || seen.has(id)) continue;
+        seen.add(id);
+        batch.push(id);
+        allMeta.push({
+          videoId: id,
+          title: v.title || "",
+          author: v.author || "",
+          lengthSeconds: v.lengthSeconds
+        });
+      }
+      if (batch.length === 0) break;
+      allIds.push(...batch);
+      playlistVideosData.set(playlistId, allMeta.slice());
+      if (onProgress) onProgress(allIds.slice());
+      if (totalFromApi !== null && allIds.length >= totalFromApi) break;
+      page++;
+    }
+    const total = Math.max(totalFromApi || 0, allIds.length);
+    return { ids: allIds, total, meta: allMeta };
+  }
+
+  function syncLangFromYouTube(lang) {
+    if (!player || !lang?.playlistId || isSpecialMode(lang)) return false;
+    try {
+      const list = player.getPlaylist?.();
+      if (!list?.length) return false;
+      playlistVideoIds.set(lang.playlistId, [...list]);
+      mergeIntoExcluded(list);
+      applyPlaylistCount(lang, list.length);
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function showRefreshingStatus() {
+    const lang = langs[current];
+    if (!lang || isSpecialMode(lang) || !els.desc) return;
+    els.desc.textContent = `Actualizando ${lang.name}…`;
+  }
+
+  async function refreshPlaylistsFromInvidious(options = {}) {
+    if (!options.silent) showRefreshingStatus();
+    await loadInvidiousInstances();
+    const playlistLangs = langs.filter((l) => l.playlistId && !isSpecialMode(l));
+    let refreshedAny = false;
+    await Promise.all(playlistLangs.map(async (lang) => {
+      try {
+        const { ids, total } = await fetchAllPlaylistIds(lang.playlistId, (partialIds) => {
+          playlistVideoIds.set(lang.playlistId, partialIds);
+          mergeIntoExcluded(partialIds);
+          applyPlaylistCount(lang, partialIds.length);
+        });
+        if (ids.length > 0) {
+          playlistVideoIds.set(lang.playlistId, ids);
+          mergeIntoExcluded(ids);
+          applyPlaylistCount(lang, total);
+          refreshedAny = true;
+        }
+      } catch (e) { /* continuar con config.js */ }
+    }));
+    if (refreshedAny) computeNovedades();
+    if (!options.silent) refreshCurrentDesc();
+  }
+
+  function savePlaylistSnapshot() {
+    if (playlistVideoIds.size === 0) return;
+    const snap = { updatedAt: Date.now() };
+    for (const [plId, ids] of playlistVideoIds) {
+      snap[plId] = ids;
+    }
+    try {
+      localStorage.setItem(SNAPSHOT_KEY, JSON.stringify(snap));
+    } catch (e) { /* quota */ }
+  }
+
+  function computeNovedades() {
+    const currentAll = new Set();
+    for (const ids of playlistVideoIds.values()) {
+      ids.forEach((id) => currentAll.add(id));
+    }
+
+    let raw = null;
+    try {
+      raw = localStorage.getItem(SNAPSHOT_KEY);
+    } catch (e) { /* ignore */ }
+
+    if (!raw) {
+      novedadesPool = [];
+      savePlaylistSnapshot();
+      updateNovedadesDesc();
+      updateNovedadesTabBadge();
+      return;
+    }
+
+    let last;
+    try {
+      last = JSON.parse(raw);
+    } catch (e) {
+      novedadesPool = [];
+      updateNovedadesDesc();
+      updateNovedadesTabBadge();
+      return;
+    }
+
+    const lastAll = new Set();
+    Object.entries(last).forEach(([key, arr]) => {
+      if (key === "updatedAt" || !Array.isArray(arr)) return;
+      arr.forEach((id) => lastAll.add(id));
+    });
+
+    novedadesPool = [...currentAll].filter((id) => !lastAll.has(id));
+    updateNovedadesDesc();
+    updateNovedadesTabBadge();
+  }
+
+  function updateNovedadesDesc() {
+    const n = novedadesPool.length;
+    const text = n === 0
+      ? "Novedades · no hay canciones nuevas desde tu última visita"
+      : `Novedades · ${n} canción${n === 1 ? "" : "es"} nueva${n === 1 ? "" : "s"} desde tu última visita`;
+    const idx = langs.findIndex((l) => isNovedadesMode(l));
+    if (idx >= 0) {
+      langDesc[idx] = text;
+      langs[idx].desc = text;
+    }
+    if (isNovedadesMode(langs[current])) {
+      els.desc.textContent = text;
+    }
+  }
+
+  function updateNovedadesTabBadge() {
+    const idx = langs.findIndex((l) => isNovedadesMode(l));
+    if (idx < 0 || !els.tabs?.children[idx]) return;
+    const btn = els.tabs.children[idx];
+    const count = novedadesPool.length;
+    btn.classList.toggle("novedades-has", count > 0);
+    let badge = btn.querySelector(".nov-badge");
+    if (count > 0) {
+      if (!badge) {
+        badge = document.createElement("span");
+        badge.className = "nov-badge";
+        btn.appendChild(badge);
+      }
+      badge.textContent = count > 99 ? "99+" : String(count);
+    } else if (badge) {
+      badge.remove();
+    }
+  }
+
+  function maybeResetNovedadesPlayed(lang) {
+    const key = storageKey(lang);
+    const disliked = getDisliked(lang);
+    const playable = novedadesPool.filter((id) => !disliked.has(id) && !tooLongSkipped.has(id));
+    if (!playable.length) return getPlayed(key);
+
+    const played = getPlayed(key);
+    const playedCount = playable.filter((id) => played.has(id)).length;
+    if (playedCount / playable.length >= PLAYED_RESET_RATIO) {
+      resetPlayed(key);
+      return new Set();
+    }
+    return played;
+  }
+
+  function pickNextNovedadesVideo(lang, excludeId) {
+    const disliked = getDisliked(lang);
+    const played = maybeResetNovedadesPlayed(lang);
+    const pool = novedadesPool.filter(
+      (id) => !disliked.has(id) && !tooLongSkipped.has(id) && id !== excludeId
+    );
+    const unplayed = pool.filter((id) => !played.has(id));
+    const pickFrom = unplayed.length ? unplayed : pool;
+    if (!pickFrom.length) return null;
+    return pickFrom[Math.floor(Math.random() * pickFrom.length)];
+  }
+
+  async function playNovedadesVideo(autoplay) {
+    const lang = langs[current];
+    if (!player || !apiReady || !isNovedadesMode(lang)) return false;
+
+    await ensurePlaylistsReady();
+
+    const videoId = pickNextNovedadesVideo(lang, getCurrentVideoId());
+    if (!isNovedadesMode(langs[current])) return false;
+
+    if (!videoId) {
+      updateNovedadesDesc();
+      return false;
+    }
+
+    shufflePending = false;
+    lastTrackedVideoId = null;
+    player.loadVideoById(videoId);
+    if (autoplay) player.playVideo();
+    updateNovedadesDesc();
+    return true;
+  }
+
+  async function ensurePlaylistsReady() {
+    if (!playlistsRefreshPromise) {
+      playlistsRefreshPromise = refreshPlaylistsFromInvidious();
+    }
+    try {
+      await playlistsRefreshPromise;
+    } catch (e) { /* fallback a config.js y EV3C_EXCLUDED */ }
+  }
+
+  function refreshCurrentDesc() {
+    const lang = langs[current];
+    if (!lang || isSpecialMode(lang)) return;
+    els.desc.textContent = langDesc[current] || lang.desc;
+  }
+
+  function getDiscoverContextCode() {
+    const ctx = langs[lastContextIndex];
+    return !ctx || ctx.code === "ALL" || isSpecialMode(ctx) ? "ALL" : ctx.code;
+  }
+
+  function getDiscoverContextPlaylistIds() {
+    const code = getDiscoverContextCode();
+    const all = getAllLangConfig();
+    if (code === "ALL") {
+      return langs.filter((l) => l.playlistId && !isSpecialMode(l)).map((l) => l.playlistId);
+    }
+    const lang = langs.find((l) => l.code === code);
+    return [lang?.playlistId, all?.playlistId].filter(Boolean);
+  }
+
+  function extractTitleWords(title) {
+    return (title || "")
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^\w\s]/g, " ")
+      .split(/\s+/)
+      .filter((w) => w.length > 3 && !DISCOVER_STOPWORDS.has(w));
+  }
+
+  function pickDiscoverSeeds(count = 6) {
+    const plIds = getDiscoverContextPlaylistIds();
+    const pool = [];
+    plIds.forEach((plId) => {
+      (playlistVideosData.get(plId) || []).forEach((v) => pool.push(v));
+    });
+    if (!pool.length) return [];
+    return pool.sort(() => Math.random() - 0.5).slice(0, count);
+  }
+
+  function buildTasteSearchQueries(seeds) {
+    const year = new Date().getFullYear();
+    const tasteQueries = [];
+    const newQueries = [];
+
+    seeds.forEach((seed) => {
+      if (seed.author) {
+        tasteQueries.push(seed.author);
+        tasteQueries.push(`${seed.author} official`);
+        tasteQueries.push(`${seed.author} music`);
+        newQueries.push(`${seed.author} new ${year}`);
+        newQueries.push(`${seed.author} latest single`);
+      }
+      const words = extractTitleWords(seed.title);
+      if (words.length >= 2) tasteQueries.push(words.slice(0, 3).join(" "));
+      if (words[0]) tasteQueries.push(`${words[0]} similar artists`);
+    });
+
+    getDiscoverQueries().forEach((q) => newQueries.push(q));
+
+    const shuffle = (arr) => arr.sort(() => Math.random() - 0.5);
+    return [...shuffle(tasteQueries), ...shuffle(newQueries)];
+  }
+
+  function getRecencyBonus(item) {
+    const pub = item.published;
+    if (!pub || pub <= 0) return 0;
+    const ageDays = (Date.now() / 1000 - pub) / 86400;
+    if (ageDays <= 90) return 2;
+    if (ageDays <= 180) return 1;
+    if (ageDays <= 365) return 1;
+    return 0;
+  }
+
+  function scoreDiscoverTaste(item, seeds) {
+    let score = 0;
+    const author = (item.author || "").toLowerCase();
+    const title = (item.title || "").toLowerCase();
+
+    seeds.forEach((seed) => {
+      const seedAuthor = (seed.author || "").toLowerCase();
+      if (seedAuthor && author === seedAuthor) score += 10;
+      else if (seedAuthor && author.includes(seedAuthor.split(" ")[0])) score += 5;
+
+      extractTitleWords(seed.title).forEach((w) => {
+        if (title.includes(w)) score += 2;
+      });
+    });
+    return score;
+  }
+
+  function pickFromScoredPool(pool, played, currentId) {
+    const unplayed = pool.filter(
+      (item) => !played.has(item.videoId) && item.videoId !== currentId
+    );
+    const candidates = unplayed.length ? unplayed : pool.filter((item) => item.videoId !== currentId);
+    if (!candidates.length) return null;
+
+    candidates.sort((a, b) => {
+      if (b.taste !== a.taste) return b.taste - a.taste;
+      return b.recency - a.recency;
+    });
+    const topTaste = candidates[0].taste;
+    const tier = candidates.filter((c) => c.taste >= Math.max(2, topTaste - 2));
+    const pickFrom = tier.length ? tier : candidates;
+    return pickFrom[Math.floor(Math.random() * pickFrom.length)].videoId;
+  }
+
+  function getDiscoverQueries() {
+    const code = getDiscoverContextCode();
+    const qAll = DISCOVER_QUERIES.ALL;
+    if (code === "ALL") return [...qAll];
+    return [...(DISCOVER_QUERIES[code] || []), ...qAll];
+  }
+
+  function isDurationAllowed(seconds) {
+    if (seconds == null || seconds <= 0) return true;
+    return seconds <= MAX_DURATION;
+  }
+
+  function isDiscoverCandidate(item, lang) {
+    const videoId = typeof item === "string" ? item : item?.videoId;
+    if (!videoId || videoId.length !== 11) return false;
+    if (isVideoInEv3cLists(videoId)) return false;
+    if (getDisliked(lang).has(videoId)) return false;
+    if (typeof item === "object" && item.lengthSeconds != null && !isDurationAllowed(item.lengthSeconds)) {
+      return false;
+    }
+    return true;
+  }
+
+  function addDiscoverCandidate(scored, item, seeds, lang, minTaste) {
+    if (!isDiscoverCandidate(item, lang)) return;
+    const taste = seeds.length ? scoreDiscoverTaste(item, seeds) : 0;
+    if (seeds.length && taste < minTaste) return;
+    const recency = getRecencyBonus(item);
+    const entry = {
+      videoId: item.videoId,
+      taste,
+      recency,
+      score: taste * 10 + recency
+    };
+    const prev = scored.get(item.videoId);
+    if (!prev || entry.score > prev.score) {
+      scored.set(item.videoId, entry);
+    }
+  }
+
+  function getDiscoverPlayed() {
+    return getPlayed(DISCOVER_KEY);
+  }
+
+  async function findNewDiscoverVideo(lang) {
+    const currentId = getCurrentVideoId();
+    let played = getDiscoverPlayed();
+    const seeds = pickDiscoverSeeds(6);
+
+    for (let attempt = 0; attempt < 2; attempt++) {
+      if (attempt === 1) {
+        resetPlayed(DISCOVER_KEY);
+        played = new Set();
+      }
+
+      const scored = new Map();
+      const queries = seeds.length
+        ? buildTasteSearchQueries(seeds)
+        : getDiscoverQueries().sort(() => Math.random() - 0.5);
+
+      for (const q of queries.slice(0, 14)) {
+        try {
+          const results = await invidiousFetch(
+            `/api/v1/search?q=${encodeURIComponent(q)}&type=video`
+          );
+          const list = Array.isArray(results) ? results : [];
+          list.forEach((v) => addDiscoverCandidate(scored, v, seeds, lang, 2));
+        } catch (e) { /* siguiente búsqueda */ }
+      }
+
+      let pool = [...scored.values()];
+      if (!pool.length && seeds.length) {
+        for (const q of queries.slice(14)) {
+          try {
+            const results = await invidiousFetch(
+              `/api/v1/search?q=${encodeURIComponent(q)}&type=video`
+            );
+            const list = Array.isArray(results) ? results : [];
+            list.forEach((v) => addDiscoverCandidate(scored, v, seeds, lang, 1));
+          } catch (e) { /* siguiente */ }
+        }
+        pool = [...scored.values()];
+      }
+      if (!pool.length) {
+        for (const q of getDiscoverQueries().sort(() => Math.random() - 0.5)) {
+          try {
+            const results = await invidiousFetch(
+              `/api/v1/search?q=${encodeURIComponent(q)}&type=video`
+            );
+            const list = Array.isArray(results) ? results : [];
+            list.forEach((v) => addDiscoverCandidate(scored, v, seeds, lang, 1));
+          } catch (e) { /* siguiente */ }
+        }
+        pool = [...scored.values()];
+      }
+
+      const pick = pickFromScoredPool(pool, played, currentId);
+      if (pick) return pick;
+    }
+    return null;
+  }
+
+  function updateDiscoverDesc() {
+    const code = getDiscoverContextCode();
+    if (code === "ALL") {
+      els.desc.textContent = "Discover · según tu música habitual · fuera de tus listas";
+      return;
+    }
+    const ctx = langs.find((l) => l.code === code);
+    els.desc.textContent = `Discover · según tu música habitual · fuera de ${ctx?.name || code}`;
+  }
+
+  function showDiscoverLoader() {
+    if (!els.discoverLoader) return;
+    els.discoverLoader.classList.remove("hidden");
+    discoverWaitingPlay = true;
+    clearTimeout(discoverLoaderTimer);
+    discoverLoaderTimer = setTimeout(hideDiscoverLoader, 25000);
+  }
+
+  function hideDiscoverLoader() {
+    if (!els.discoverLoader) return;
+    els.discoverLoader.classList.add("hidden");
+    discoverWaitingPlay = false;
+    discoverTargetVideoId = null;
+    clearTimeout(discoverLoaderTimer);
+    discoverLoaderTimer = null;
+    if (isMixMode(langs[current])) updateDiscoverDesc();
+  }
+
+  async function playDiscoverVideo(autoplay) {
+    const lang = langs[current];
+    if (!player || !apiReady || !isMixMode(lang)) return false;
+    if (discoverLoading) return false;
+
+    discoverLoading = true;
+    showDiscoverLoader();
+    els.desc.textContent = "Discover · buscando canciones nuevas para ti…";
+
+    try {
+      await ensurePlaylistsReady();
+
+      const videoId = await findNewDiscoverVideo(lang);
+      if (!isMixMode(langs[current])) {
+        hideDiscoverLoader();
+        return false;
+      }
+      if (!videoId) {
+        hideDiscoverLoader();
+        els.desc.textContent = "Discover · no se encontró canción. Pulsa DISCOVER de nuevo.";
+        return false;
+      }
+
+      shufflePending = false;
+      lastTrackedVideoId = null;
+      discoverTargetVideoId = videoId;
+      player.loadVideoById(videoId);
+      if (autoplay) player.playVideo();
+      return true;
+    } catch (e) {
+      hideDiscoverLoader();
+      return false;
+    } finally {
+      discoverLoading = false;
+    }
+  }
 
   function externalUrl(lang) {
+    if (isSpecialMode(lang)) {
+      const vid = getCurrentVideoId();
+      if (vid) return `https://www.youtube.com/watch?v=${vid}`;
+      return searchUrl(lang.searchQuery || "ev3c music");
+    }
     if (lang.playlistId) return `https://www.youtube.com/playlist?list=${lang.playlistId}`;
     if (lang.videoId) return `https://www.youtube.com/watch?v=${lang.videoId}`;
     return searchUrl(lang.searchQuery);
@@ -49,19 +692,86 @@
     return `https://www.youtube.com/results?search_query=${encodeURIComponent(q || "ev3c music")}`;
   }
 
-  function getDisliked(playlistId) {
-    if (!playlistId) return new Set();
+  function getStoredSet(prefix, key) {
+    if (!key) return new Set();
     try {
-      const raw = localStorage.getItem(DISLIKE_PREFIX + playlistId);
+      const raw = localStorage.getItem(prefix + key);
       return raw ? new Set(JSON.parse(raw)) : new Set();
     } catch (e) {
       return new Set();
     }
   }
 
-  function saveDisliked(playlistId, set) {
-    if (!playlistId) return;
-    localStorage.setItem(DISLIKE_PREFIX + playlistId, JSON.stringify([...set]));
+  function saveStoredSet(prefix, key, set) {
+    if (!key) return;
+    localStorage.setItem(prefix + key, JSON.stringify([...set]));
+  }
+
+  function getDisliked(lang) {
+    return getStoredSet(DISLIKE_PREFIX, storageKey(lang));
+  }
+
+  function saveDisliked(lang, set) {
+    saveStoredSet(DISLIKE_PREFIX, storageKey(lang), set);
+  }
+
+  function getPlayed(key) {
+    return getStoredSet(PLAYED_PREFIX, key);
+  }
+
+  function savePlayed(key, set) {
+    saveStoredSet(PLAYED_PREFIX, key, set);
+  }
+
+  function resetPlayed(key) {
+    localStorage.removeItem(PLAYED_PREFIX + key);
+  }
+
+  function getPlaylistList() {
+    if (!player) return [];
+    try {
+      const list = player.getPlaylist && player.getPlaylist();
+      return list && list.length ? list : [];
+    } catch (e) {
+      return [];
+    }
+  }
+
+  function getPlayableVideoIds(lang) {
+    const list = getPlaylistList();
+    const disliked = getDisliked(lang);
+    if (list.length) {
+      return list.filter((id) => !disliked.has(id));
+    }
+    return [];
+  }
+
+  function maybeResetPlayed(lang) {
+    const key = storageKey(lang);
+    const playable = getPlayableVideoIds(lang);
+    if (!playable.length) return getPlayed(key);
+
+    const played = getPlayed(key);
+    const playedCount = playable.filter((id) => played.has(id)).length;
+    const ratio = playedCount / playable.length;
+
+    if (ratio >= PLAYED_RESET_RATIO) {
+      resetPlayed(key);
+      return new Set();
+    }
+    return played;
+  }
+
+  function markVideoPlayed(lang, videoId) {
+    const key = storageKey(lang);
+    if (!videoId || !key) return;
+
+    const played = getPlayed(key);
+    if (played.has(videoId)) return;
+
+    played.add(videoId);
+    savePlayed(key, played);
+    maybeResetPlayed(lang);
   }
 
   function getCurrentVideoId() {
@@ -74,30 +784,38 @@
     }
   }
 
-  function getPlayableIndices(lang) {
-    if (!player) return [];
-    try {
-      const list = player.getPlaylist && player.getPlaylist();
-      if (!list || !list.length) return [];
-      const disliked = getDisliked(lang.playlistId);
-      const indices = [];
-      for (let i = 0; i < list.length; i++) {
-        if (!disliked.has(list[i])) indices.push(i);
-      }
-      return indices;
-    } catch (e) {
-      return [];
+  function getPriorityIndices(lang) {
+    const list = getPlaylistList();
+    if (!list.length) return { preferred: [], fallback: [] };
+
+    const disliked = getDisliked(lang);
+    const played = maybeResetPlayed(lang);
+    const preferred = [];
+    const fallback = [];
+
+    for (let i = 0; i < list.length; i++) {
+      if (disliked.has(list[i])) continue;
+      if (tooLongSkipped.has(list[i])) continue;
+      if (played.has(list[i])) fallback.push(i);
+      else preferred.push(i);
     }
+
+    return { preferred, fallback };
   }
 
-  function playRandomNonDisliked(lang, autoplay) {
-    if (!player || !lang) return false;
-    const indices = getPlayableIndices(lang);
-    if (!indices.length) {
+  function playNextSmart(lang, autoplay) {
+    if (!player || !lang || isSpecialMode(lang)) return false;
+
+    const { preferred, fallback } = getPriorityIndices(lang);
+    const pool = preferred.length ? preferred : fallback;
+
+    if (!pool.length) {
       els.desc.textContent = "Todas las canciones están en dislike. Limpia el almacenamiento del navegador.";
       return false;
     }
-    const idx = indices[Math.floor(Math.random() * indices.length)];
+
+    lastTrackedVideoId = null;
+    const idx = pool[Math.floor(Math.random() * pool.length)];
     player.setShuffle(true);
     player.playVideoAt(idx);
     if (autoplay) player.playVideo();
@@ -112,11 +830,13 @@
   function applyRandomStart() {
     if (!player || !shufflePending) return;
     const lang = langs[current];
-    if (!lang) return;
+    if (!lang || isSpecialMode(lang)) return;
     try {
       const list = player.getPlaylist && player.getPlaylist();
       if (list && list.length > 0) {
-        playRandomNonDisliked(lang, shouldAutoplay);
+        syncLangFromYouTube(lang);
+        mergeCurrentPlaylistIntoExcluded();
+        playNextSmart(lang, shouldAutoplay);
         shufflePending = false;
       }
     } catch (e) { /* la playlist aún no está lista */ }
@@ -126,6 +846,7 @@
     if (!lang.playlistId) return false;
     shufflePending = true;
     shouldAutoplay = autoplay;
+    lastTrackedVideoId = null;
 
     if (!player || !apiReady) return true;
 
@@ -137,29 +858,310 @@
     return true;
   }
 
+  function trackCurrentVideo() {
+    const lang = langs[current];
+    const videoId = getCurrentVideoId();
+    if (!videoId || !lang) return;
+    if (!storageKey(lang)) return;
+    if (videoId === lastTrackedVideoId) return;
+
+    lastTrackedVideoId = videoId;
+    markVideoPlayed(lang, videoId);
+  }
+
+  function getVideoDurationSec() {
+    if (!player) return -1;
+    try {
+      const d = player.getDuration();
+      return typeof d === "number" && d > 0 ? d : -1;
+    } catch (e) {
+      return -1;
+    }
+  }
+
+  function skipTooLongIfNeeded() {
+    const lang = langs[current];
+    if (!lang || !player) return;
+
+    const check = (retries) => {
+      const duration = getVideoDurationSec();
+      if (duration > MAX_DURATION) {
+        const videoId = getCurrentVideoId();
+        if (videoId) tooLongSkipped.add(videoId);
+        lastTrackedVideoId = null;
+        if (isMixMode(lang)) playDiscoverVideo(true);
+        else if (isNovedadesMode(lang)) playNovedadesVideo(true);
+        else playNextSmart(lang, true);
+        return;
+      }
+      if (duration <= 0 && retries > 0) {
+        setTimeout(() => check(retries - 1), 300);
+      }
+    };
+    check(6);
+  }
+
   function skipDislikedOnCue() {
     const lang = langs[current];
-    if (!lang || !lang.playlistId || !player) return;
+    if (!lang || !player) return;
     const videoId = getCurrentVideoId();
     if (!videoId) return;
-    const disliked = getDisliked(lang.playlistId);
-    if (disliked.has(videoId)) {
-      playRandomNonDisliked(lang, true);
+
+    if (isMixMode(lang)) {
+      if (isInMyLists(videoId) || getDisliked(lang).has(videoId)) {
+        playDiscoverVideo(true);
+      }
+      return;
     }
+
+    if (isNovedadesMode(lang)) {
+      if (getDisliked(lang).has(videoId)) {
+        playNovedadesVideo(true);
+      }
+      return;
+    }
+
+    if (!getDisliked(lang).has(videoId)) return;
+    playNextSmart(lang, true);
+  }
+
+  function getAllLangConfig() {
+    return langs.find((l) => l.code === "ALL");
+  }
+
+  function getLikeableLangs() {
+    return langs.filter((l) =>
+      ["ENG", "ESP", "CAT", "FRA"].includes(l.code) && l.playlistId
+    );
+  }
+
+  function getVideoPlaylistMembership(videoId) {
+    const membership = new Map();
+    langs.filter((l) => l.playlistId && !isSpecialMode(l)).forEach((lang) => {
+      const ids = playlistVideoIds.get(lang.playlistId);
+      membership.set(
+        lang.playlistId,
+        ids ? ids.includes(videoId) : excludedIds.has(videoId)
+      );
+    });
+    return membership;
+  }
+
+  function isInAllList(videoId) {
+    if (!videoId) return false;
+    const all = getAllLangConfig();
+    if (!all?.playlistId) return false;
+    const ids = playlistVideoIds.get(all.playlistId);
+    if (ids?.length) return ids.includes(videoId);
+    if (window.EV3C_YOUTUBE_LIKE?.isLikedIn(all.playlistId, videoId)) return true;
+    return excludedIds.has(videoId);
+  }
+
+  function addVideoToPlaylistCache(videoId, playlistIds) {
+    playlistIds.forEach((plId) => {
+      const ids = playlistVideoIds.get(plId) || [];
+      if (!ids.includes(videoId)) playlistVideoIds.set(plId, [...ids, videoId]);
+    });
+    mergeIntoExcluded([videoId]);
+  }
+
+  function renderLikeModalList(videoId, title, membership) {
+    const allLang = getAllLangConfig();
+    els.likeModalVideo.textContent = title;
+    els.likePlaylistList.innerHTML = "";
+
+    if (allLang) {
+      const inAll = membership.get(allLang.playlistId);
+      const li = document.createElement("li");
+      li.className = "like-playlist-item mandatory" + (inAll ? " in-list" : "");
+      li.innerHTML =
+        `<label>` +
+        `<input type="checkbox" checked disabled data-playlist-id="${allLang.playlistId}" />` +
+        `<span class="pl-name">${allLang.flag} ${allLang.name}</span>` +
+        `<span class="pl-badge">${inAll ? "ya está" : "siempre"}</span>` +
+        `</label>`;
+      els.likePlaylistList.appendChild(li);
+    }
+
+    const ctx = langs[lastContextIndex];
+    const precheck = ctx && ["ENG", "ESP", "CAT", "FRA"].includes(ctx.code) ? ctx.code : null;
+
+    getLikeableLangs().forEach((lang) => {
+      const inList = membership.get(lang.playlistId);
+      const li = document.createElement("li");
+      li.className = "like-playlist-item" + (inList ? " in-list" : "");
+      const checked = inList || lang.code === precheck ? " checked" : "";
+      const disabled = inList ? " disabled" : "";
+      const badge = inList ? `<span class="pl-badge">ya está</span>` : "";
+      li.innerHTML =
+        `<label>` +
+        `<input type="checkbox" value="${lang.code}" data-playlist-id="${lang.playlistId}"${checked}${disabled} />` +
+        `<span class="pl-name">${lang.flag} ${lang.name}</span>` +
+        badge +
+        `</label>`;
+      els.likePlaylistList.appendChild(li);
+    });
+  }
+
+  function collectPlaylistsToAdd(videoId) {
+    const membership = getVideoPlaylistMembership(videoId);
+    const allLang = getAllLangConfig();
+    const toAdd = [];
+
+    if (allLang?.playlistId && !membership.get(allLang.playlistId)) {
+      toAdd.push(allLang.playlistId);
+    }
+
+    els.likePlaylistList.querySelectorAll('input[type="checkbox"]:checked:not(:disabled)').forEach((input) => {
+      const plId = input.dataset.playlistId;
+      if (plId && !membership.get(plId) && !toAdd.includes(plId)) toAdd.push(plId);
+    });
+
+    return toAdd;
+  }
+
+  let likeModalRefreshId = 0;
+
+  async function openLikeModal() {
+    if (!player || !apiReady || !els.likeModal) return;
+    const videoId = getCurrentVideoId();
+    if (!videoId) return;
+
+    pendingLikeVideoId = videoId;
+    const refreshId = ++likeModalRefreshId;
+
+    let title = videoId;
+    try {
+      const data = player.getVideoData();
+      if (data?.title) title = data.title;
+    } catch (e) { /* ignore */ }
+
+    els.likeModalVideo.textContent = title;
+    els.likePlaylistList.innerHTML = '<li class="like-loading">Consultando listas en YouTube…</li>';
+    els.likeModal.hidden = false;
+
+    await ensurePlaylistsReady();
+    if (refreshId !== likeModalRefreshId || pendingLikeVideoId !== videoId) return;
+
+    renderLikeModalList(videoId, title, getVideoPlaylistMembership(videoId));
+
+    refreshPlaylistsFromInvidious({ silent: true }).then(() => {
+      if (refreshId !== likeModalRefreshId || els.likeModal.hidden || pendingLikeVideoId !== videoId) return;
+      renderLikeModalList(videoId, title, getVideoPlaylistMembership(videoId));
+    });
+  }
+
+  function updateLikeButtonState() {
+    if (!els.likeBtn) return;
+    const videoId = getCurrentVideoId();
+    const inAll = isInAllList(videoId);
+    els.likeBtn.classList.toggle("active", inAll);
+    els.likeBtn.disabled = false;
+    els.likeBtn.title = inAll
+      ? "Añadir a más listas ev3c music"
+      : "Añadir a listas ev3c music";
+  }
+
+  function flashLikeFeedback(msg) {
+    const lang = langs[current];
+    const prev = els.desc.textContent;
+    els.desc.textContent = msg;
+    setTimeout(() => {
+      if (isMixMode(lang)) updateDiscoverDesc();
+      else if (isNovedadesMode(lang)) updateNovedadesDesc();
+      else els.desc.textContent = langDesc[current] || lang?.desc || prev;
+    }, 3200);
+  }
+
+  function closeLikeModal() {
+    if (els.likeModal) els.likeModal.hidden = true;
+    pendingLikeVideoId = null;
+    likeModalRefreshId++;
+  }
+
+  let pendingLikeVideoId = null;
+
+  async function confirmLike() {
+    if (!pendingLikeVideoId || !window.EV3C_YOUTUBE_LIKE) return;
+
+    const videoId = pendingLikeVideoId;
+    const playlistIds = collectPlaylistsToAdd(videoId);
+
+    if (!playlistIds.length) {
+      flashLikeFeedback("Ya está en todas las listas seleccionadas");
+      closeLikeModal();
+      return;
+    }
+
+    els.likeConfirmBtn.disabled = true;
+    try {
+      const result = await EV3C_YOUTUBE_LIKE.addToPlaylists(videoId, playlistIds);
+      addVideoToPlaylistCache(videoId, playlistIds);
+      closeLikeModal();
+      updateLikeButtonState();
+
+      const names = playlistIds.map((id) => {
+        const lang = langs.find((l) => l.playlistId === id);
+        return lang ? lang.code : "ALL";
+      });
+
+      if (result.needsConfig) {
+        flashLikeFeedback(`✓ Guardada en ${names.join(", ")} · configura youtube.clientId`);
+      } else if (result.error) {
+        flashLikeFeedback(`✓ Local · YouTube: ${result.error}`);
+      } else if (result.errors?.length) {
+        flashLikeFeedback(`✓ Añadida · algunos errores en YouTube`);
+      } else if (result.youtube > 0) {
+        flashLikeFeedback(`✓ Añadida a ${names.join(", ")} en YouTube`);
+      } else {
+        flashLikeFeedback(`✓ Añadida a ${names.join(", ")}`);
+      }
+    } catch (e) {
+      flashLikeFeedback("Error al añadir: " + e.message);
+    } finally {
+      els.likeConfirmBtn.disabled = false;
+    }
+  }
+
+  function handleLike() {
+    openLikeModal();
+  }
+
+  function initYoutubeLikeAuth() {
+    if (!window.EV3C_YOUTUBE_LIKE || !CFG.youtube) return;
+    EV3C_YOUTUBE_LIKE.init(CFG.youtube);
+    const all = getAllLangConfig();
+    if (all) mergeIntoExcluded([...EV3C_YOUTUBE_LIKE.getLikedAll()]);
+  }
+
+  function waitForGisAndInit() {
+    if (window.google?.accounts?.oauth2) {
+      initYoutubeLikeAuth();
+      return;
+    }
+    setTimeout(waitForGisAndInit, 200);
   }
 
   function handleDislike() {
     const lang = langs[current];
-    if (!lang || !lang.playlistId || !player || !apiReady) return;
+    if (!lang || !player || !apiReady) return;
 
     const videoId = getCurrentVideoId();
     if (!videoId) return;
 
-    const disliked = getDisliked(lang.playlistId);
+    const disliked = getDisliked(lang);
     disliked.add(videoId);
-    saveDisliked(lang.playlistId, disliked);
+    saveDisliked(lang, disliked);
 
-    playRandomNonDisliked(lang, true);
+    if (isMixMode(lang)) {
+      lastTrackedVideoId = null;
+      playDiscoverVideo(true);
+    } else if (isNovedadesMode(lang)) {
+      lastTrackedVideoId = null;
+      playNovedadesVideo(true);
+    } else if (lang.playlistId) {
+      playNextSmart(lang, true);
+    }
   }
 
   function selectLang(i, autoplay) {
@@ -174,10 +1176,40 @@
     els.glow.style.background = GLOWS[lang.code] || "var(--grad)";
     els.flag.textContent = lang.flag;
     els.label.textContent = lang.name;
-    els.desc.textContent = lang.desc;
     els.openBtn.href = externalUrl(lang);
     els.openBtn.target = "_blank";
     els.openBtn.rel = "noopener";
+
+    lastTrackedVideoId = null;
+
+    if (!isMixMode(lang) && !isNovedadesMode(lang)) {
+      lastContextIndex = i;
+      discoverLoading = false;
+      hideDiscoverLoader();
+      els.desc.textContent = langDesc[i] || lang.desc;
+    }
+
+    if (isNovedadesMode(lang)) {
+      els.placeholder.classList.add("hidden");
+      hideDiscoverLoader();
+      updateNovedadesDesc();
+      if (apiReady) {
+        playNovedadesVideo(autoplay || userStarted);
+      }
+      return;
+    }
+
+    if (isMixMode(lang)) {
+      els.placeholder.classList.add("hidden");
+      discoverLoading = false;
+      pendingDiscoverAutoplay = autoplay || userStarted;
+      showDiscoverLoader();
+      els.desc.textContent = "Discover · buscando canciones nuevas para ti…";
+      if (apiReady) {
+        playDiscoverVideo(pendingDiscoverAutoplay);
+      }
+      return;
+    }
 
     if (lang.playlistId) {
       els.placeholder.classList.add("hidden");
@@ -230,9 +1262,18 @@
       events: {
         onReady: function () {
           apiReady = true;
-          if (first.playlistId) {
-            loadRandomPlaylist(first, !isFileProtocol);
-          }
+          (async () => {
+            await ensurePlaylistsReady();
+            refreshCurrentDesc();
+            const lang = langs[current] || first;
+            if (isMixMode(lang)) {
+              playDiscoverVideo(!isFileProtocol);
+            } else if (isNovedadesMode(lang)) {
+              playNovedadesVideo(!isFileProtocol);
+            } else if (lang.playlistId) {
+              loadRandomPlaylist(lang, !isFileProtocol);
+            }
+          })();
         },
         onStateChange: function (e) {
           if (
@@ -244,8 +1285,41 @@
             applyRandomStart();
             return;
           }
-          if (e.data === YT.PlayerState.CUED || e.data === YT.PlayerState.PLAYING) {
+
+          if (e.data === YT.PlayerState.PLAYING) {
+            const vid = getCurrentVideoId();
+            if (
+              discoverWaitingPlay &&
+              isMixMode(langs[current]) &&
+              (!discoverTargetVideoId || vid === discoverTargetVideoId)
+            ) {
+              hideDiscoverLoader();
+            }
             skipDislikedOnCue();
+            skipTooLongIfNeeded();
+            trackCurrentVideo();
+            updateLikeButtonState();
+            if (isMixMode(langs[current]) || isNovedadesMode(langs[current])) {
+              els.openBtn.href = externalUrl(langs[current]);
+            }
+            return;
+          }
+
+          if (e.data === YT.PlayerState.CUED) {
+            skipDislikedOnCue();
+            return;
+          }
+
+          if (e.data === YT.PlayerState.ENDED) {
+            lastTrackedVideoId = null;
+            const lang = langs[current];
+            if (isMixMode(lang)) {
+              playDiscoverVideo(true);
+            } else if (isNovedadesMode(lang)) {
+              playNovedadesVideo(true);
+            } else {
+              playNextSmart(lang, true);
+            }
           }
         }
       }
@@ -273,9 +1347,23 @@
     }
   });
 
+  if (els.likeBtn) {
+    els.likeBtn.addEventListener("click", handleLike);
+  }
+
+  if (els.likeConfirmBtn) {
+    els.likeConfirmBtn.addEventListener("click", confirmLike);
+  }
+
+  document.querySelectorAll("[data-like-close]").forEach((el) => {
+    el.addEventListener("click", closeLikeModal);
+  });
+
   if (els.dislikeBtn) {
     els.dislikeBtn.addEventListener("click", handleDislike);
   }
+
+  waitForGisAndInit();
 
   document.querySelectorAll("[data-yt-channel]").forEach((el) => {
     el.href = CFG.channelUrl || searchUrl("ev3c music");
@@ -299,7 +1387,13 @@
 
   if (els.year) els.year.textContent = new Date().getFullYear();
 
+  window.addEventListener("beforeunload", savePlaylistSnapshot);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") savePlaylistSnapshot();
+  });
+
   if (langs.length) {
+    playlistsRefreshPromise = refreshPlaylistsFromInvidious();
     selectLang(0, false);
     if (isFileProtocol) {
       showFileWarning();
