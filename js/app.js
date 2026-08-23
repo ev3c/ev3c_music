@@ -18,6 +18,7 @@
     CAT: "linear-gradient(100deg, #ffd23f, #ff2bb4)",
     FRA: "linear-gradient(100deg, #8b3bff, #00d4ff)",
     DISCOVER: "linear-gradient(100deg, #00ffcc, #8b3bff 45%, #ff2bb4)",
+    FIRE: "linear-gradient(100deg, #ff7a18, #ff2bb4 55%, #ffd23f)",
     NEW: "linear-gradient(100deg, #ffd23f, #ff7a18 45%, #ff2bb4)"
   };
 
@@ -41,7 +42,9 @@
     discoverLoader: $("#discoverLoader"),
     footerLangs: $("#footerLangs"),
     year: $("#year"),
+    fileWarn: $("#fileWarn"),
     castTvBtn: $("#castTvBtn"),
+    playerTvShield: $("#playerTvShield")
   };
 
   const isFileProtocol = window.location.protocol === "file:";
@@ -98,8 +101,12 @@
     return lang && lang.mode === "novedades";
   }
 
+  function isFireplaceMode(lang) {
+    return lang && lang.mode === "fireplace";
+  }
+
   function isSpecialMode(lang) {
-    return isMixMode(lang) || isNovedadesMode(lang);
+    return isMixMode(lang) || isNovedadesMode(lang) || isFireplaceMode(lang);
   }
 
   function storageKey(lang) {
@@ -933,7 +940,7 @@
 
   function skipTooLongIfNeeded() {
     const lang = langs[current];
-    if (!lang || !player) return;
+    if (!lang || !player || isFireplaceMode(lang)) return;
 
     const check = (retries) => {
       const duration = getVideoDurationSec();
@@ -965,6 +972,8 @@
       }
       return;
     }
+
+    if (isFireplaceMode(lang)) return;
 
     if (isNovedadesMode(lang)) {
       if (getDisliked(lang).has(videoId)) {
@@ -1027,7 +1036,7 @@
       const li = document.createElement("li");
       li.className = "like-playlist-item mandatory" + (inAll ? " in-list" : "");
       li.innerHTML =
-        `<label>` +
+        `<label tabindex="-1">` +
         `<input type="checkbox" checked disabled data-playlist-id="${allLang.playlistId}" />` +
         `<span class="pl-name">${allLang.flag} ${allLang.name}</span>` +
         `<span class="pl-badge">${inAll ? "ya está" : "siempre"}</span>` +
@@ -1046,7 +1055,7 @@
       const disabled = inList ? " disabled" : "";
       const badge = inList ? `<span class="pl-badge">ya está</span>` : "";
       li.innerHTML =
-        `<label>` +
+        `<label tabindex="${inList ? "-1" : "0"}">` +
         `<input type="checkbox" value="${lang.code}" data-playlist-id="${lang.playlistId}"${checked}${disabled} />` +
         `<span class="pl-name">${lang.flag} ${lang.name}</span>` +
         badge +
@@ -1096,10 +1105,12 @@
     if (refreshId !== likeModalRefreshId || pendingLikeVideoId !== videoId) return;
 
     renderLikeModalList(videoId, title, getVideoPlaylistMembership(videoId));
+    focusLikeModal();
 
     refreshPlaylistsFromInvidious({ silent: true }).then(() => {
       if (refreshId !== likeModalRefreshId || els.likeModal.hidden || pendingLikeVideoId !== videoId) return;
       renderLikeModalList(videoId, title, getVideoPlaylistMembership(videoId));
+      focusLikeModal();
     });
   }
 
@@ -1129,6 +1140,12 @@
     if (els.likeModal) els.likeModal.hidden = true;
     pendingLikeVideoId = null;
     likeModalRefreshId++;
+    els.likeBtn?.focus();
+  }
+
+  function focusLikeModal() {
+    const first = els.likeModal?.querySelector('label[tabindex="0"], #likeConfirmBtn');
+    if (first) first.focus();
   }
 
   let pendingLikeVideoId = null;
@@ -1234,11 +1251,24 @@
 
     lastTrackedVideoId = null;
 
-    if (!isMixMode(lang) && !isNovedadesMode(lang)) {
+    if (!isMixMode(lang) && !isNovedadesMode(lang) && !isFireplaceMode(lang)) {
       lastContextIndex = i;
       discoverLoading = false;
       hideDiscoverLoader();
       els.desc.textContent = langDesc[i] || lang.desc;
+    }
+
+    if (isFireplaceMode(lang)) {
+      els.placeholder.classList.add("hidden");
+      hideDiscoverLoader();
+      els.desc.textContent = lang.desc;
+      els.openBtn.href = `https://www.youtube.com/live/${lang.videoId}`;
+      if (player && apiReady && lang.videoId) {
+        shufflePending = false;
+        player.loadVideoById(lang.videoId);
+        if (autoplay || userStarted) player.playVideo();
+      }
+      return;
     }
 
     if (isNovedadesMode(lang)) {
@@ -1314,6 +1344,7 @@
       events: {
         onReady: function () {
           apiReady = true;
+          lockYoutubeIframe();
           (async () => {
             await ensurePlaylistsReady();
             refreshCurrentDesc();
@@ -1322,6 +1353,9 @@
               playDiscoverVideo(!isFileProtocol);
             } else if (isNovedadesMode(lang)) {
               playNovedadesVideo(!isFileProtocol);
+            } else if (isFireplaceMode(lang) && lang.videoId) {
+              player.loadVideoById(lang.videoId);
+              if (!isFileProtocol) player.playVideo();
             } else if (lang.playlistId) {
               loadRandomPlaylist(lang, !isFileProtocol);
             }
@@ -1347,11 +1381,13 @@
             ) {
               hideDiscoverLoader();
             }
-            skipDislikedOnCue();
-            skipTooLongIfNeeded();
-            trackCurrentVideo();
+            if (!isFireplaceMode(langs[current])) {
+              skipDislikedOnCue();
+              skipTooLongIfNeeded();
+              trackCurrentVideo();
+            }
             updateLikeButtonState();
-            if (isMixMode(langs[current]) || isNovedadesMode(langs[current])) {
+            if (isSpecialMode(langs[current])) {
               els.openBtn.href = externalUrl(langs[current]);
             }
             return;
@@ -1365,6 +1401,10 @@
           if (e.data === YT.PlayerState.ENDED) {
             lastTrackedVideoId = null;
             const lang = langs[current];
+            if (isFireplaceMode(lang)) {
+              if (lang.videoId) player.loadVideoById(lang.videoId);
+              return;
+            }
             if (isMixMode(lang)) {
               playDiscoverVideo(true);
             } else if (isNovedadesMode(lang)) {
@@ -1453,6 +1493,119 @@
     if (document.visibilityState === "hidden") savePlaylistSnapshot();
   });
 
+  function isAndroidTv() {
+    const ua = navigator.userAgent || "";
+    return /Android/i.test(ua) && /(TV|GoogleTV|BRAVIA|AFT|SmartTV|MIBOX|MiTV|Xiaomi|SHIELD)/i.test(ua);
+  }
+
+  function lockYoutubeIframe() {
+    const iframe = document.querySelector("#ytPlayer iframe");
+    if (!iframe) return;
+    iframe.setAttribute("tabindex", "-1");
+    iframe.setAttribute("aria-hidden", "true");
+  }
+
+  function tvFocusables() {
+    const modalOpen = els.likeModal && !els.likeModal.hidden;
+    const root = modalOpen ? els.likeModalBox || els.likeModal : document;
+    return [...root.querySelectorAll(
+      'button:not([disabled]):not([hidden]), a.btn:not([hidden]), label[tabindex="0"]'
+    )].filter((el) => {
+      if (el.closest("[hidden]")) return false;
+      const r = el.getBoundingClientRect();
+      return r.width > 0 && r.height > 0;
+    });
+  }
+
+  function moveTvFocus(dx, dy) {
+    const items = tvFocusables();
+    if (!items.length) return;
+    const active = document.activeElement;
+    const currentEl = items.includes(active) ? active : items[0];
+    if (!items.includes(active)) {
+      currentEl.focus();
+      return;
+    }
+
+    const from = currentEl.getBoundingClientRect();
+    const cx = from.left + from.width / 2;
+    const cy = from.top + from.height / 2;
+    let best = null;
+    let bestScore = Infinity;
+
+    items.forEach((el) => {
+      if (el === currentEl) return;
+      const r = el.getBoundingClientRect();
+      const ex = r.left + r.width / 2;
+      const ey = r.top + r.height / 2;
+      const vx = ex - cx;
+      const vy = ey - cy;
+      if (dx && vx * dx <= 8) return;
+      if (dy && vy * dy <= 8) return;
+      const primary = dx ? Math.abs(vx) : Math.abs(vy);
+      const secondary = dx ? Math.abs(vy) : Math.abs(vx);
+      const score = primary + secondary * 2.4;
+      if (score < bestScore) {
+        bestScore = score;
+        best = el;
+      }
+    });
+
+    (best || currentEl).focus();
+  }
+
+  function activateTvFocus(el) {
+    if (!el) return;
+    if (el.tagName === "LABEL") {
+      const input = el.querySelector("input");
+      if (input && !input.disabled) input.checked = !input.checked;
+      return;
+    }
+    el.click();
+  }
+
+  function initTvRemote() {
+    if (isAndroidTv()) document.body.classList.add("tv-remote");
+
+    document.addEventListener("keydown", (e) => {
+      const key = e.key;
+      const isArrow = key === "ArrowLeft" || key === "ArrowRight" || key === "ArrowUp" || key === "ArrowDown";
+      const isOk = key === "Enter" || key === "NumpadEnter" || key === "Select";
+      const isBack = key === "Escape" || key === "GoBack" || e.keyCode === 4 || (key === "Backspace" && els.likeModal && !els.likeModal.hidden);
+
+      if (isArrow || isOk || isBack) {
+        document.body.classList.add("tv-remote");
+        lockYoutubeIframe();
+      }
+
+      if (isBack && els.likeModal && !els.likeModal.hidden) {
+        e.preventDefault();
+        closeLikeModal();
+        return;
+      }
+
+      if (isArrow) {
+        e.preventDefault();
+        if (key === "ArrowLeft") moveTvFocus(-1, 0);
+        if (key === "ArrowRight") moveTvFocus(1, 0);
+        if (key === "ArrowUp") moveTvFocus(0, -1);
+        if (key === "ArrowDown") moveTvFocus(0, 1);
+        return;
+      }
+
+      if (isOk) {
+        const el = document.activeElement;
+        if (el && (el.matches("button, a.btn, label[tabindex]") || tvFocusables().includes(el))) {
+          e.preventDefault();
+          activateTvFocus(el);
+        }
+      }
+    });
+
+    const firstTab = els.tabs?.querySelector(".lang-tab");
+    if (isAndroidTv() && firstTab) firstTab.focus();
+  }
+
   if (langs.length) {
     playlistsRefreshPromise = refreshPlaylistsFromInvidious();
     selectLang(0, false);
@@ -1460,4 +1613,6 @@
       showFileWarning();
     }
   }
+
+  initTvRemote();
 })();

@@ -104,6 +104,17 @@ window.EV3C_CONFIG = {
       videoCount: 0,
       videoId: "",
       searchQuery: "ev3c music discover"
+    },
+    {
+      code: "FIRE",
+      flag: "🔥",
+      name: "Fireplace",
+      desc: "Chimenea en directo · ambiente relajado",
+      mode: "fireplace",
+      playlistId: "",
+      videoCount: 0,
+      videoId: "cjsZyFd955U",
+      searchQuery: "fireplace live"
     }
   ]
 };
