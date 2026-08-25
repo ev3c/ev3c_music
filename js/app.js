@@ -1505,6 +1505,41 @@
     iframe.setAttribute("aria-hidden", "true");
   }
 
+  function unlockYoutubeIframe() {
+    const iframe = document.querySelector("#ytPlayer iframe");
+    if (!iframe) return;
+    iframe.removeAttribute("tabindex");
+    iframe.removeAttribute("aria-hidden");
+    try { iframe.focus(); } catch (e) { /* ignore */ }
+  }
+
+  let youtubeRemoteMode = false;
+  let lastTvFocus = null;
+
+  function enterYoutubeControls() {
+    youtubeRemoteMode = true;
+    lastTvFocus = document.activeElement;
+    document.body.classList.add("yt-controls");
+    unlockYoutubeIframe();
+    if (els.desc) els.desc.textContent = "Mando en YouTube · Atrás para volver a ev3c music";
+  }
+
+  function exitYoutubeControls() {
+    youtubeRemoteMode = false;
+    document.body.classList.remove("yt-controls");
+    lockYoutubeIframe();
+    const restore = lastTvFocus && document.contains(lastTvFocus)
+      ? lastTvFocus
+      : els.playerTvShield || els.tabs?.querySelector(".lang-tab");
+    restore?.focus();
+    refreshCurrentDesc();
+    if (isMixMode(langs[current])) updateDiscoverDesc();
+    else if (isNovedadesMode(langs[current])) updateNovedadesDesc();
+    else if (isFireplaceMode(langs[current]) && langs[current]) {
+      els.desc.textContent = langs[current].desc;
+    }
+  }
+
   function tvFocusables() {
     const modalOpen = els.likeModal && !els.likeModal.hidden;
     const root = modalOpen ? els.likeModalBox || els.likeModal : document;
@@ -1556,6 +1591,10 @@
 
   function activateTvFocus(el) {
     if (!el) return;
+    if (el.id === "playerTvShield") {
+      enterYoutubeControls();
+      return;
+    }
     if (el.tagName === "LABEL") {
       const input = el.querySelector("input");
       if (input && !input.disabled) input.checked = !input.checked;
@@ -1567,11 +1606,26 @@
   function initTvRemote() {
     if (isAndroidTv()) document.body.classList.add("tv-remote");
 
+    if (els.playerTvShield) {
+      els.playerTvShield.addEventListener("click", () => {
+        document.body.classList.add("tv-remote");
+        enterYoutubeControls();
+      });
+    }
+
     document.addEventListener("keydown", (e) => {
       const key = e.key;
       const isArrow = key === "ArrowLeft" || key === "ArrowRight" || key === "ArrowUp" || key === "ArrowDown";
       const isOk = key === "Enter" || key === "NumpadEnter" || key === "Select";
-      const isBack = key === "Escape" || key === "GoBack" || e.keyCode === 4 || (key === "Backspace" && els.likeModal && !els.likeModal.hidden);
+      const isBack = key === "Escape" || key === "GoBack" || e.keyCode === 4 || key === "Backspace";
+
+      if (youtubeRemoteMode) {
+        if (isBack) {
+          e.preventDefault();
+          exitYoutubeControls();
+        }
+        return;
+      }
 
       if (isArrow || isOk || isBack) {
         document.body.classList.add("tv-remote");
