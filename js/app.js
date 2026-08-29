@@ -36,6 +36,7 @@
     likeBtn: $("#likeBtn"),
     dislikeBtn: $("#dislikeBtn"),
     likeModal: $("#likeModal"),
+    likeModalBox: $(".like-modal-box"),
     likeModalVideo: $("#likeModalVideo"),
     likePlaylistList: $("#likePlaylistList"),
     likeConfirmBtn: $("#likeConfirmBtn"),
@@ -1495,7 +1496,8 @@
 
   function isAndroidTv() {
     const ua = navigator.userAgent || "";
-    return /Android/i.test(ua) && /(TV|GoogleTV|BRAVIA|AFT|SmartTV|MIBOX|MiTV|Xiaomi|SHIELD)/i.test(ua);
+    return /EV3C_Music/i.test(ua) ||
+      (/Android/i.test(ua) && /(TV|GoogleTV|BRAVIA|AFT|SmartTV|MIBOX|MiTV|Xiaomi|SHIELD)/i.test(ua));
   }
 
   function lockYoutubeIframe() {
@@ -1604,7 +1606,10 @@
   }
 
   function initTvRemote() {
-    if (isAndroidTv()) document.body.classList.add("tv-remote");
+    if (isAndroidTv()) {
+      document.body.classList.add("tv-remote");
+      if (els.castTvBtn) els.castTvBtn.hidden = true;
+    }
 
     if (els.playerTvShield) {
       els.playerTvShield.addEventListener("click", () => {

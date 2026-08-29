@@ -279,11 +279,54 @@ body.tv-remote .lang-brand {
   order: 0;
   justify-content: flex-start;
 }
-body.tv-remote .lang-logo { width: 64px; height: 64px; }
+body.tv-remote .lang-logo { width: 36px; height: 36px; }
+body.tv-remote .app-version { font-size: .55rem; }
+body.tv-remote .lang-bar { gap: 8px; margin-bottom: 8px; }
+body.tv-remote .lang-tabs { gap: 4px; }
 body.tv-remote .section-only .lang-tabs {
   justify-content: flex-start;
   width: auto;
   flex: 1;
+}
+body.tv-remote .lang-tab {
+  padding: 3px 7px;
+  border-radius: 7px;
+  font-size: .62rem;
+  gap: 3px;
+}
+body.tv-remote .lang-tab .flag { font-size: .72rem; }
+body.tv-remote .lang-tab .code { font-size: .5rem; }
+body.tv-remote .lang-tab .nov-badge {
+  min-width: 13px; height: 13px; line-height: 13px; font-size: .42rem; top: -4px; right: -4px;
+}
+body.tv-remote .player-meta {
+  margin-top: 6px; padding: 4px 8px; gap: 6px;
+}
+body.tv-remote .player-flag { font-size: .9rem; }
+body.tv-remote .player-label { font-size: .62rem; }
+body.tv-remote .player-desc { font-size: .55rem; }
+body.tv-remote .player-meta .btn-sm,
+body.tv-remote .btn-sm {
+  padding: 3px 8px;
+  font-size: .58rem;
+  min-height: 0;
+  gap: 4px;
+}
+body.tv-remote .btn:focus-visible,
+body.tv-remote .lang-tab:focus-visible {
+  outline-width: 2px;
+  outline-offset: 2px;
+  transform: scale(1.08);
+}
+body.tv-remote .like-playlist-item label {
+  min-height: 0;
+  padding: 6px 8px;
+  font-size: .7rem;
+}
+body.tv-remote .like-modal-actions .btn {
+  min-height: 0;
+  padding: 6px 12px;
+  font-size: .7rem;
 }
 .player-placeholder {
   position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px;
@@ -476,7 +519,7 @@ body.tv-remote .section-only .lang-tabs {
     order: 0;
     justify-content: flex-start;
   }
-  body.tv-remote .lang-logo { width: 64px; height: 64px; }
+  body.tv-remote .lang-logo { width: 36px; height: 36px; }
   body.tv-remote .section-only .lang-tabs {
     justify-content: flex-start;
     width: auto;
