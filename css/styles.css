@@ -348,6 +348,45 @@ body.tv-remote .like-modal-actions .btn {
 .player-placeholder p { color: var(--muted); max-width: 320px; }
 .player-placeholder.hidden { display: none; }
 
+.artists-panel {
+  position: absolute; inset: 0; z-index: 18;
+  display: flex; flex-direction: column;
+  background: rgba(5, 6, 12, .96);
+  padding: 10px 12px 8px;
+}
+.artists-panel.hidden { display: none !important; }
+.artists-toolbar {
+  display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; flex-shrink: 0;
+}
+.artists-toolbar .artist-sort.active {
+  background: var(--grad); color: #fff; border-color: transparent;
+}
+.artists-list {
+  overflow: auto; display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 6px; align-content: start;
+}
+.artist-card {
+  text-align: left; width: 100%;
+  padding: 8px 10px; border-radius: 10px;
+  background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.1);
+  color: var(--txt); cursor: pointer;
+  font-family: inherit; transition: border-color .2s, background .2s, transform .15s;
+}
+.artist-card:hover, .artist-card:focus-visible {
+  border-color: rgba(0,212,255,.5); background: rgba(0,212,255,.08);
+}
+.artist-card .ac-name { font-weight: 600; font-size: .82rem; line-height: 1.2; }
+.artist-card .ac-meta { color: var(--muted); font-size: .68rem; margin-top: 2px; }
+.artist-card .ac-type { font-family: 'Orbitron', sans-serif; font-size: .55rem; letter-spacing: .4px; color: var(--cyan); }
+body.tv-remote .artists-toolbar { gap: 4px; }
+body.tv-remote .artists-toolbar .btn-sm { padding: 2px 6px; font-size: .5rem; }
+body.tv-remote .artists-list { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 4px; }
+body.tv-remote .artist-card { padding: 4px 6px; }
+body.tv-remote .artist-card .ac-name { font-size: .62rem; }
+body.tv-remote .artist-card .ac-meta,
+body.tv-remote .artist-card .ac-type { font-size: .48rem; }
+
 .discover-loader {
   position: absolute; inset: 0; z-index: 20;
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px;

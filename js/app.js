@@ -19,7 +19,8 @@
     FRA: "linear-gradient(100deg, #8b3bff, #00d4ff)",
     DISCOVER: "linear-gradient(100deg, #00ffcc, #8b3bff 45%, #ff2bb4)",
     FIRE: "linear-gradient(100deg, #ff7a18, #ff2bb4 55%, #ffd23f)",
-    NEW: "linear-gradient(100deg, #ffd23f, #ff7a18 45%, #ff2bb4)"
+    NEW: "linear-gradient(100deg, #ffd23f, #ff7a18 45%, #ff2bb4)",
+    ART: "linear-gradient(100deg, #ffd23f, #00d4ff 50%, #8b3bff)"
   };
 
   const $ = (sel) => document.querySelector(sel);
@@ -45,7 +46,9 @@
     year: $("#year"),
     fileWarn: $("#fileWarn"),
     castTvBtn: $("#castTvBtn"),
-    playerTvShield: $("#playerTvShield")
+    playerTvShield: $("#playerTvShield"),
+    artistsPanel: $("#artistsPanel"),
+    artistsList: $("#artistsList")
   };
 
   const isFileProtocol = window.location.protocol === "file:";
@@ -106,13 +109,18 @@
     return lang && lang.mode === "fireplace";
   }
 
+  function isArtistsMode(lang) {
+    return lang && lang.mode === "artists";
+  }
+
   function isSpecialMode(lang) {
-    return isMixMode(lang) || isNovedadesMode(lang) || isFireplaceMode(lang);
+    return isMixMode(lang) || isNovedadesMode(lang) || isFireplaceMode(lang) || isArtistsMode(lang);
   }
 
   function storageKey(lang) {
     if (isMixMode(lang)) return DISCOVER_KEY;
     if (isNovedadesMode(lang)) return NOVEDADES_KEY;
+    if (isArtistsMode(lang)) return "__artists__";
     return lang.playlistId;
   }
 
@@ -204,7 +212,8 @@
       title: item.title || "",
       author: item.uploaderName || "",
       lengthSeconds: item.duration > 0 ? item.duration : null,
-      published
+      published,
+      viewCount: item.views || item.viewCount || 0
     };
   }
 
@@ -737,6 +746,148 @@
     }
   }
 
+  let artistSort = "born";
+  let currentArtist = null;
+  let artistQueue = [];
+  let artistQueueIndex = 0;
+
+  function artistYear(value) {
+    if (!value) return 0;
+    const y = parseInt(String(value).slice(0, 4), 10);
+    return Number.isFinite(y) ? y : 0;
+  }
+
+  function artistYearsLabel(artist) {
+    if (artist.died) return `${artist.born}–${artist.died}`;
+    return `${artist.born}–`;
+  }
+
+  function sortedArtists() {
+    const list = [...(window.EV3C_ARTISTS || [])];
+    if (artistSort === "name") {
+      return list.sort((a, b) => a.name.localeCompare(b.name, "es"));
+    }
+    if (artistSort === "died") {
+      return list.sort((a, b) => {
+        const ad = artistYear(a.died);
+        const bd = artistYear(b.died);
+        if (ad && bd && ad !== bd) return ad - bd;
+        if (ad && !bd) return -1;
+        if (!ad && bd) return 1;
+        return artistYear(a.born) - artistYear(b.born);
+      });
+    }
+    return list.sort((a, b) => {
+      const d = artistYear(a.born) - artistYear(b.born);
+      return d !== 0 ? d : a.name.localeCompare(b.name, "es");
+    });
+  }
+
+  function hideArtistsPanel() {
+    if (els.artistsPanel) els.artistsPanel.classList.add("hidden");
+  }
+
+  function showArtistsPanel() {
+    if (!els.artistsPanel) return;
+    els.artistsPanel.classList.remove("hidden");
+    renderArtistsList();
+  }
+
+  function renderArtistsList() {
+    if (!els.artistsList) return;
+    els.artistsList.innerHTML = "";
+    sortedArtists().forEach((artist) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "artist-card";
+      const kind = artist.type === "group" ? "Grupo" : "Cantante";
+      btn.innerHTML =
+        `<div class="ac-type">${kind}</div>` +
+        `<div class="ac-name">${artist.name}</div>` +
+        `<div class="ac-meta">${artistYearsLabel(artist)}</div>`;
+      btn.addEventListener("click", () => playArtistPopular(artist, true));
+      els.artistsList.appendChild(btn);
+    });
+  }
+
+  function getViewCount(item) {
+    return item.viewCount || item.views || item.viewCountText || 0;
+  }
+
+  async function findArtistPopularVideos(artist) {
+    await loadPipedInstances();
+    const queries = [
+      `${artist.q || artist.name} official music video`,
+      `${artist.name} official`,
+      `${artist.name} greatest hits`
+    ];
+    const scored = new Map();
+    for (const q of queries) {
+      try {
+        const list = await discoverSearch(q);
+        list.forEach((v) => {
+          const id = v.videoId;
+          if (!id || id.length !== 11) return;
+          if (v.lengthSeconds != null && !isDurationAllowed(v.lengthSeconds)) return;
+          const views = Number(getViewCount(v)) || 0;
+          const prev = scored.get(id);
+          if (!prev || views > prev.views) {
+            scored.set(id, { videoId: id, views, title: v.title || "" });
+          }
+        });
+        if (scored.size >= 8) break;
+      } catch (e) { /* siguiente */ }
+    }
+    return [...scored.values()].sort((a, b) => b.views - a.views).slice(0, 12);
+  }
+
+  async function playArtistPopular(artist, autoplay) {
+    if (!player || !apiReady) return false;
+    currentArtist = artist;
+    hideArtistsPanel();
+    showDiscoverLoader();
+    els.desc.textContent = `${artist.name} · buscando vídeos más populares…`;
+
+    try {
+      const videos = await findArtistPopularVideos(artist);
+      if (!isArtistsMode(langs[current])) {
+        hideDiscoverLoader();
+        return false;
+      }
+      if (!videos.length) {
+        hideDiscoverLoader();
+        showArtistsPanel();
+        els.desc.textContent = `${artist.name} · no se encontraron vídeos. Elige otro artista.`;
+        return false;
+      }
+      artistQueue = videos;
+      artistQueueIndex = 0;
+      shufflePending = false;
+      lastTrackedVideoId = null;
+      player.loadVideoById(videos[0].videoId);
+      if (autoplay) player.playVideo();
+      els.desc.textContent = `${artist.name} · éxitos más populares en YouTube`;
+      els.openBtn.href = `https://www.youtube.com/results?search_query=${encodeURIComponent(artist.q || artist.name)}`;
+      return true;
+    } catch (e) {
+      hideDiscoverLoader();
+      showArtistsPanel();
+      return false;
+    }
+  }
+
+  function playNextArtistVideo() {
+    if (!currentArtist || !artistQueue.length) return false;
+    artistQueueIndex += 1;
+    if (artistQueueIndex >= artistQueue.length) artistQueueIndex = 0;
+    const next = artistQueue[artistQueueIndex];
+    if (!next) return false;
+    lastTrackedVideoId = null;
+    player.loadVideoById(next.videoId);
+    player.playVideo();
+    return true;
+  }
+
   function externalUrl(lang) {
     if (isSpecialMode(lang)) {
       const vid = getCurrentVideoId();
@@ -951,6 +1102,7 @@
         lastTrackedVideoId = null;
         if (isMixMode(lang)) playDiscoverVideo(true);
         else if (isNovedadesMode(lang)) playNovedadesVideo(true);
+        else if (isArtistsMode(lang)) playNextArtistVideo();
         else playNextSmart(lang, true);
         return;
       }
@@ -975,6 +1127,11 @@
     }
 
     if (isFireplaceMode(lang)) return;
+
+    if (isArtistsMode(lang)) {
+      if (getDisliked(lang).has(videoId)) playNextArtistVideo();
+      return;
+    }
 
     if (isNovedadesMode(lang)) {
       if (getDisliked(lang).has(videoId)) {
@@ -1133,7 +1290,9 @@
     setTimeout(() => {
       if (isMixMode(lang)) updateDiscoverDesc();
       else if (isNovedadesMode(lang)) updateNovedadesDesc();
-      else els.desc.textContent = langDesc[current] || lang?.desc || prev;
+      else if (isArtistsMode(lang) && currentArtist) {
+        els.desc.textContent = `${currentArtist.name} · éxitos más populares en YouTube`;
+      } else els.desc.textContent = langDesc[current] || lang?.desc || prev;
     }, 3200);
   }
 
@@ -1229,6 +1388,9 @@
     } else if (isNovedadesMode(lang)) {
       lastTrackedVideoId = null;
       playNovedadesVideo(true);
+    } else if (isArtistsMode(lang)) {
+      lastTrackedVideoId = null;
+      playNextArtistVideo();
     } else if (lang.playlistId) {
       playNextSmart(lang, true);
     }
@@ -1252,16 +1414,28 @@
 
     lastTrackedVideoId = null;
 
-    if (!isMixMode(lang) && !isNovedadesMode(lang) && !isFireplaceMode(lang)) {
+    if (!isMixMode(lang) && !isNovedadesMode(lang) && !isFireplaceMode(lang) && !isArtistsMode(lang)) {
       lastContextIndex = i;
       discoverLoading = false;
       hideDiscoverLoader();
+      hideArtistsPanel();
       els.desc.textContent = langDesc[i] || lang.desc;
+    }
+
+    if (isArtistsMode(lang)) {
+      hideDiscoverLoader();
+      els.placeholder.classList.add("hidden");
+      currentArtist = null;
+      artistQueue = [];
+      els.desc.textContent = lang.desc;
+      showArtistsPanel();
+      return;
     }
 
     if (isFireplaceMode(lang)) {
       els.placeholder.classList.add("hidden");
       hideDiscoverLoader();
+      hideArtistsPanel();
       els.desc.textContent = lang.desc;
       els.openBtn.href = `https://www.youtube.com/live/${lang.videoId}`;
       if (player && apiReady && lang.videoId) {
@@ -1275,6 +1449,7 @@
     if (isNovedadesMode(lang)) {
       els.placeholder.classList.add("hidden");
       hideDiscoverLoader();
+      hideArtistsPanel();
       updateNovedadesDesc();
       if (apiReady) {
         playNovedadesVideo(autoplay || userStarted);
@@ -1286,6 +1461,7 @@
       els.placeholder.classList.add("hidden");
       discoverLoading = false;
       pendingDiscoverAutoplay = autoplay || userStarted;
+      hideArtistsPanel();
       showDiscoverLoader();
       els.desc.textContent = "Discover · buscando canciones nuevas para ti…";
       if (apiReady) {
@@ -1295,6 +1471,7 @@
     }
 
     if (lang.playlistId) {
+      hideArtistsPanel();
       els.placeholder.classList.add("hidden");
       loadRandomPlaylist(lang, autoplay || userStarted);
       return;
@@ -1354,6 +1531,8 @@
               playDiscoverVideo(!isFileProtocol);
             } else if (isNovedadesMode(lang)) {
               playNovedadesVideo(!isFileProtocol);
+            } else if (isArtistsMode(lang)) {
+              showArtistsPanel();
             } else if (isFireplaceMode(lang) && lang.videoId) {
               player.loadVideoById(lang.videoId);
               if (!isFileProtocol) player.playVideo();
@@ -1377,8 +1556,8 @@
             const vid = getCurrentVideoId();
             if (
               discoverWaitingPlay &&
-              isMixMode(langs[current]) &&
-              (!discoverTargetVideoId || vid === discoverTargetVideoId)
+              (isMixMode(langs[current]) || isArtistsMode(langs[current])) &&
+              (!discoverTargetVideoId || isArtistsMode(langs[current]) || vid === discoverTargetVideoId)
             ) {
               hideDiscoverLoader();
             }
@@ -1410,6 +1589,8 @@
               playDiscoverVideo(true);
             } else if (isNovedadesMode(lang)) {
               playNovedadesVideo(true);
+            } else if (isArtistsMode(lang)) {
+              playNextArtistVideo();
             } else {
               playNextSmart(lang, true);
             }
@@ -1455,6 +1636,16 @@
   if (els.dislikeBtn) {
     els.dislikeBtn.addEventListener("click", handleDislike);
   }
+
+  document.querySelectorAll("[data-artist-sort]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      artistSort = btn.dataset.artistSort || "born";
+      document.querySelectorAll("[data-artist-sort]").forEach((b) => {
+        b.classList.toggle("active", b === btn);
+      });
+      renderArtistsList();
+    });
+  });
 
   if (window.EV3C_CAST && els.castTvBtn) {
     EV3C_CAST.init({

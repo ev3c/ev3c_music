@@ -115,6 +115,17 @@ window.EV3C_CONFIG = {
       videoCount: 0,
       videoId: "cjsZyFd955U",
       searchQuery: "fireplace live"
+    },
+    {
+      code: "ART",
+      flag: "🎤",
+      name: "Artistas",
+      desc: "Cantantes y grupos · ordenados por fecha",
+      mode: "artists",
+      playlistId: "",
+      videoCount: 0,
+      videoId: "",
+      searchQuery: "official music video"
     }
   ]
 };
